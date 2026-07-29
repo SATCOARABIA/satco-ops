@@ -796,6 +796,8 @@ function Invoices() {
       const invoiceDate = f.get("invoice_date");
       const invoiceValue = Number(f.get("invoice_value"));
       const currency = f.get("currency") || "AED";
+      const periodFrom = f.get("period_from") || null;
+      const periodTo = f.get("period_to") || null;
       const invoiceNoOverride = (f.get("invoice_no") || "").trim();
       const po = openPos.find((p) => p.id === poId);
       if (!po) throw new Error("Select a valid PO");
@@ -823,6 +825,8 @@ function Invoices() {
         customer_id: po.customer_id,
         invoice_value: invoiceValue,
         currency,
+        period_from: periodFrom,
+        period_to: periodTo,
         payment_terms_days: po.payment_terms_days || 30,
         status: "draft",
         source_file_url: sourceFileUrl,
@@ -852,6 +856,8 @@ function Invoices() {
             </select>
           </div>
           <div className="field"><label>Invoice Date</label><input type="date" name="invoice_date" required /></div>
+          <div className="field"><label>Invoice Period - From</label><input type="date" name="period_from" /></div>
+          <div className="field"><label>Invoice Period - To</label><input type="date" name="period_to" /></div>
           <div className="field">
             <label>Currency</label>
             <select name="currency" defaultValue="AED">
@@ -873,16 +879,17 @@ function Invoices() {
         <h3>Invoices</h3>
         <div className="table-scroll">
         <table className="data-table">
-          <thead><tr><th>Invoice No.</th><th>Date</th><th>PO</th><th>Customer</th><th>Currency</th><th>Value</th><th>Paid</th><th>Balance</th><th>Due Date</th><th>Paid Date</th><th>Days Delayed</th><th>Status</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Invoice No.</th><th>Date</th><th>PO</th><th>Customer</th><th>Period From</th><th>Period To</th><th>Currency</th><th>Value</th><th>Paid</th><th>Balance</th><th>Due Date</th><th>Paid Date</th><th>Days Delayed</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>
             {invoices.map((inv) => (
               editingId === inv.id ? (
-                <EditInvoiceRow key={inv.id} inv={inv} colSpan={13} onCancel={() => setEditingId(null)} onSaved={() => { setEditingId(null); load(); }} />
+                <EditInvoiceRow key={inv.id} inv={inv} colSpan={15} onCancel={() => setEditingId(null)} onSaved={() => { setEditingId(null); load(); }} />
               ) : payingId === inv.id ? (
-                <ManagePaymentsRow key={inv.id} inv={inv} colSpan={13} onClose={() => setPayingId(null)} onChanged={() => load()} />
+                <ManagePaymentsRow key={inv.id} inv={inv} colSpan={15} onClose={() => setPayingId(null)} onChanged={() => load()} />
               ) : (
                 <tr key={inv.id} className={inv.computed_status === "Paid" ? "row-paid" : ""}>
                   <td>{inv.invoice_no}</td><td>{inv.invoice_date}</td><td>{inv.po_no}</td><td>{inv.customer_name}</td>
+                  <td>{inv.period_from || "—"}</td><td>{inv.period_to || "—"}</td>
                   <td>{inv.currency || "AED"}</td><td>{fmt(inv.invoice_value)}</td><td>{fmt(inv.amount_paid)}</td><td>{fmt(inv.balance_due)}</td>
                   <td>{inv.due_date}</td>
                   <td>{inv.paid_date || "—"}</td>
