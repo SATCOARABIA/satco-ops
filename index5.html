@@ -103,7 +103,11 @@
   .edit-row .form-grid { margin: 0; }
   .hint-text { font-size: 11.5px; color: var(--warning); font-weight: 700; margin-top: 4px; }
 
-  .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; cursor: grab; }
+  .table-scroll.dragging { cursor: grabbing; user-select: none; }
+  .cashbook-toggle { display: inline-flex; gap: 6px; margin-bottom: 14px; }
+  .cashbook-toggle button { padding: 7px 16px; border-radius: 999px; border: 1px solid var(--line-strong); background: #fff; color: var(--text); font-weight: 700; font-size: 12.5px; cursor: pointer; }
+  .cashbook-toggle button.active { background: var(--brand); color: #fff; border-color: var(--brand); }
   table.data-table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 760px; }
   table.data-table th { text-align: left; background: var(--brand); color: #fff; padding: 9px 10px; font-weight: 700; white-space: nowrap; }
   table.data-table td { padding: 9px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
@@ -534,6 +538,8 @@ function EditInvoiceRow({ inv, colSpan, onCancel, onSaved }) {
     invoice_date: inv.invoice_date || "",
     currency: inv.currency || "AED",
     invoice_value: inv.invoice_value ?? 0,
+    period_from: inv.period_from || "",
+    period_to: inv.period_to || "",
     payment_terms_days: inv.payment_terms_days ?? 30,
     status: inv.computed_status && inv.computed_status !== "Paid" && inv.computed_status !== "Overdue" ? inv.computed_status.toLowerCase() : "draft",
   });
@@ -550,6 +556,8 @@ function EditInvoiceRow({ inv, colSpan, onCancel, onSaved }) {
       invoice_date: form.invoice_date,
       currency: form.currency,
       invoice_value: Number(form.invoice_value) || 0,
+      period_from: form.period_from || null,
+      period_to: form.period_to || null,
       payment_terms_days: Number(form.payment_terms_days) || 30,
       status: form.status,
     };
@@ -569,6 +577,8 @@ function EditInvoiceRow({ inv, colSpan, onCancel, onSaved }) {
         <div className="form-grid">
           <div className="field"><label>Invoice No.</label><input value={form.invoice_no} onChange={(e)=>setForm({...form, invoice_no:e.target.value})} /></div>
           <div className="field"><label>Invoice Date</label><input type="date" value={form.invoice_date} onChange={(e)=>setForm({...form, invoice_date:e.target.value})} /></div>
+          <div className="field"><label>Invoice Period - From</label><input type="date" value={form.period_from} onChange={(e)=>setForm({...form, period_from:e.target.value})} /></div>
+          <div className="field"><label>Invoice Period - To</label><input type="date" value={form.period_to} onChange={(e)=>setForm({...form, period_to:e.target.value})} /></div>
           <div className="field">
             <label>Currency</label>
             <select value={form.currency} onChange={(e)=>setForm({...form, currency:e.target.value})}>
@@ -1168,6 +1178,7 @@ function PettyCash() {
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState(null);
   const [accountFilter, setAccountFilter] = useState("all");
+  const [cashbookView, setCashbookView] = useState("both");
 
   async function handleImport(e) {
     const file = e.target.files[0];
@@ -1387,16 +1398,35 @@ function PettyCash() {
 
       <div className="content-card">
         <h3>Petty Cash Book</h3>
-        <div className="cashbook-grid">
+        <div className="cashbook-toggle">
+          <button type="button" className={cashbookView === "both" ? "active" : ""} onClick={() => setCashbookView("both")}>Both</button>
+          <button type="button" className={cashbookView === "receipts" ? "active" : ""} onClick={() => setCashbookView("receipts")}>Receipts</button>
+          <button type="button" className={cashbookView === "payments" ? "active" : ""} onClick={() => setCashbookView("payments")}>Payments</button>
+        </div>
+        {cashbookView === "both" && (
+          <div className="cashbook-grid">
+            <div>
+              <h4 className="cashbook-side-title">Dr. — Receipts</h4>
+              <div className="table-scroll">{renderSide(receipts, 8)}</div>
+            </div>
+            <div>
+              <h4 className="cashbook-side-title">Cr. — Payments</h4>
+              <div className="table-scroll">{renderSide(cashPayments, 8)}</div>
+            </div>
+          </div>
+        )}
+        {cashbookView === "receipts" && (
           <div>
             <h4 className="cashbook-side-title">Dr. — Receipts</h4>
             <div className="table-scroll">{renderSide(receipts, 8)}</div>
           </div>
+        )}
+        {cashbookView === "payments" && (
           <div>
             <h4 className="cashbook-side-title">Cr. — Payments</h4>
             <div className="table-scroll">{renderSide(cashPayments, 8)}</div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
@@ -1607,6 +1637,31 @@ function App() {
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+
+// Click-and-drag horizontal scrolling for every scrollable table (applies site-wide:
+// Invoices, Purchase Orders, Petty Cash, Statements — any .table-scroll container).
+(function () {
+  let active = null, startX = 0, startScroll = 0;
+  document.addEventListener("mousedown", (e) => {
+    const el = e.target.closest(".table-scroll");
+    if (!el || e.button !== 0) return;
+    active = el;
+    startX = e.pageX;
+    startScroll = el.scrollLeft;
+    el.classList.add("dragging");
+  });
+  document.addEventListener("mousemove", (e) => {
+    if (!active) return;
+    e.preventDefault();
+    active.scrollLeft = startScroll - (e.pageX - startX);
+  });
+  function release() {
+    if (active) active.classList.remove("dragging");
+    active = null;
+  }
+  document.addEventListener("mouseup", release);
+  document.addEventListener("mouseleave", release);
+})();
 </script>
 </body>
 </html>
