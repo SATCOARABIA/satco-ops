@@ -1276,7 +1276,7 @@ function PettyCash() {
   }
 
   async function load() {
-    const { data, error } = await ops().from("petty_cash").select("*").order("entry_date", { ascending: true }).order("created_at", { ascending: true });
+    const { data, error } = await ops().from("petty_cash").select("*").order("entry_date", { ascending: false }).order("created_at", { ascending: false });
     if (error) { setError(error.message); return; }
     setEntries(data || []);
   }
@@ -1513,7 +1513,7 @@ function Statements() {
   }, []);
 
   useEffect(() => {
-    let query = ops().from("invoice_summary").select("*").order("invoice_date");
+    let query = ops().from("invoice_summary").select("*").order("invoice_date", { ascending: false });
     if (customerId) query = query.eq("customer_id", customerId);
     if (poId) query = query.eq("po_id", poId);
     query.then(({ data }) => setInvoices(data || []));
