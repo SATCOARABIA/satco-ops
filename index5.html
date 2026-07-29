@@ -108,6 +108,10 @@
   .cashbook-toggle { display: inline-flex; gap: 6px; margin-bottom: 14px; }
   .cashbook-toggle button { padding: 7px 16px; border-radius: 999px; border: 1px solid var(--line-strong); background: #fff; color: var(--text); font-weight: 700; font-size: 12.5px; cursor: pointer; }
   .cashbook-toggle button.active { background: var(--brand); color: #fff; border-color: var(--brand); }
+  .section-head { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .section-head h3 { margin: 0; }
+  .search-input { padding: 8px 12px; border: 1px solid var(--line-strong); border-radius: 10px; background: #fff; font-size: 13px; width: 260px; max-width: 100%; }
+  .search-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
   table.data-table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 760px; }
   table.data-table th { text-align: left; background: var(--brand); color: #fff; padding: 9px 10px; font-weight: 700; white-space: nowrap; }
   table.data-table td { padding: 9px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
@@ -379,6 +383,7 @@ function PurchaseOrders() {
   const [error, setError] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
+  const [search, setSearch] = useState("");
 
   async function load() {
     const { data } = await ops().from("purchase_orders").select("id, po_no, po_date, expiry_date, currency, po_value, status, remarks, source_file_url, customer_id, customers(name)").order("created_at", { ascending: false });
@@ -455,6 +460,13 @@ function PurchaseOrders() {
     }
   }
 
+  const visiblePos = pos.filter((po) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return [po.po_no, po.customers?.name, po.status, po.remarks, po.currency]
+      .some((v) => (v || "").toString().toLowerCase().includes(q));
+  });
+
   return (
     <div>
       <div className="content-card">
@@ -501,12 +513,15 @@ function PurchaseOrders() {
       </div>
 
       <div className="content-card">
-        <h3>Purchase Orders</h3>
+        <div className="section-head">
+          <h3>Purchase Orders</h3>
+          <input type="text" className="search-input" value={search} onChange={(e)=>setSearch(e.target.value)} placeholder="Search PO no., customer, status…" />
+        </div>
         <div className="table-scroll">
         <table className="data-table">
           <thead><tr><th>PO No.</th><th>PO Date</th><th>Expiry Date</th><th>Customer</th><th>Currency</th><th>Value</th><th>Status</th><th>Remarks</th><th>Actions</th></tr></thead>
           <tbody>
-            {pos.map((po) => (
+            {visiblePos.map((po) => (
               editingId === po.id ? (
                 <EditPoRow key={po.id} po={po} colSpan={9} onCancel={() => setEditingId(null)} onSaved={() => { setEditingId(null); load(); }} />
               ) : (
@@ -523,7 +538,7 @@ function PurchaseOrders() {
                 </tr>
               )
             ))}
-            {pos.length === 0 && <tr className="empty-row"><td colSpan="9">No purchase orders yet.</td></tr>}
+            {visiblePos.length === 0 && <tr className="empty-row"><td colSpan="9">{pos.length === 0 ? "No purchase orders yet." : "No purchase orders match your search."}</td></tr>}
           </tbody>
         </table>
         </div>
@@ -768,6 +783,7 @@ function Invoices() {
   const [editingId, setEditingId] = useState(null);
   const [payingId, setPayingId] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
+  const [search, setSearch] = useState("");
 
   async function load() {
     const [{ data: inv }, { data: p }] = await Promise.all([
@@ -851,6 +867,13 @@ function Invoices() {
     }
   }
 
+  const visibleInvoices = invoices.filter((inv) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return [inv.invoice_no, inv.po_no, inv.customer_name, inv.currency, inv.computed_status, inv.due_date, inv.paid_date]
+      .some((v) => (v || "").toString().toLowerCase().includes(q));
+  });
+
   return (
     <div>
       <div className="content-card">
@@ -886,12 +909,15 @@ function Invoices() {
       </div>
 
       <div className="content-card">
-        <h3>Invoices</h3>
+        <div className="section-head">
+          <h3>Invoices</h3>
+          <input type="text" className="search-input" value={search} onChange={(e)=>setSearch(e.target.value)} placeholder="Search invoice no., PO, customer, status…" />
+        </div>
         <div className="table-scroll">
         <table className="data-table">
           <thead><tr><th>Invoice No.</th><th>Date</th><th>PO</th><th>Customer</th><th>Period From</th><th>Period To</th><th>Currency</th><th>Value</th><th>Paid</th><th>Balance</th><th>Due Date</th><th>Paid Date</th><th>Days Delayed</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>
-            {invoices.map((inv) => (
+            {visibleInvoices.map((inv) => (
               editingId === inv.id ? (
                 <EditInvoiceRow key={inv.id} inv={inv} colSpan={15} onCancel={() => setEditingId(null)} onSaved={() => { setEditingId(null); load(); }} />
               ) : payingId === inv.id ? (
@@ -916,7 +942,7 @@ function Invoices() {
                 </tr>
               )
             ))}
-            {invoices.length === 0 && <tr className="empty-row"><td colSpan="13">No invoices yet.</td></tr>}
+            {visibleInvoices.length === 0 && <tr className="empty-row"><td colSpan="15">{invoices.length === 0 ? "No invoices yet." : "No invoices match your search."}</td></tr>}
           </tbody>
         </table>
         </div>
@@ -1179,6 +1205,7 @@ function PettyCash() {
   const [importMsg, setImportMsg] = useState(null);
   const [accountFilter, setAccountFilter] = useState("all");
   const [cashbookView, setCashbookView] = useState("both");
+  const [search, setSearch] = useState("");
 
   async function handleImport(e) {
     const file = e.target.files[0];
@@ -1284,7 +1311,12 @@ function PettyCash() {
   }
 
   const accountOptions = Array.from(new Set(entries.map((e) => e.account).filter(Boolean))).sort();
-  const visibleEntries = accountFilter === "all" ? entries : entries.filter((e) => (e.account || "") === accountFilter);
+  const accountFiltered = accountFilter === "all" ? entries : entries.filter((e) => (e.account || "") === accountFilter);
+  const searchQuery = search.trim().toLowerCase();
+  const visibleEntries = !searchQuery ? accountFiltered : accountFiltered.filter((e) =>
+    [e.account, e.purpose, e.supplier, e.ledger_folio, e.payment_mode, e.category, e.amount]
+      .some((v) => (v || "").toString().toLowerCase().includes(searchQuery))
+  );
 
   const receipts = visibleEntries.filter((e) => e.entry_type === "receipt");
   const cashPayments = visibleEntries.filter((e) => e.entry_type !== "receipt");
@@ -1397,7 +1429,10 @@ function PettyCash() {
       </div>
 
       <div className="content-card">
-        <h3>Petty Cash Book</h3>
+        <div className="section-head">
+          <h3>Petty Cash Book</h3>
+          <input type="text" className="search-input" value={search} onChange={(e)=>setSearch(e.target.value)} placeholder="Search particulars, supplier, bill ref…" />
+        </div>
         <div className="cashbook-toggle">
           <button type="button" className={cashbookView === "both" ? "active" : ""} onClick={() => setCashbookView("both")}>Both</button>
           <button type="button" className={cashbookView === "receipts" ? "active" : ""} onClick={() => setCashbookView("receipts")}>Receipts</button>
@@ -1439,6 +1474,7 @@ function Statements() {
   const [poId, setPoId] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [invoices, setInvoices] = useState([]);
+  const [search, setSearch] = useState("");
 
   useEffect(() => {
     ops().from("customers").select("id, name, contact_email").order("name").then(({ data }) => setCustomers(data || []));
@@ -1456,11 +1492,16 @@ function Statements() {
   const poOptions = customerId ? pos.filter((p) => p.customer_id === customerId) : pos;
 
   // Apply the payment-status filter on top of the customer/PO filtered set
-  const visibleInvoices = statusFilter === "unpaid"
+  const statusFiltered = statusFilter === "unpaid"
     ? invoices.filter((i) => Number(i.balance_due) > 0)
     : statusFilter === "paid"
     ? invoices.filter((i) => i.computed_status === "Paid")
     : invoices;
+  const searchQuery = search.trim().toLowerCase();
+  const visibleInvoices = !searchQuery ? statusFiltered : statusFiltered.filter((i) =>
+    [i.invoice_no, i.po_no, i.customer_name, i.currency, i.computed_status]
+      .some((v) => (v || "").toString().toLowerCase().includes(searchQuery))
+  );
 
   // Totals grouped by currency, since a filtered set could span more than one currency
   const currencyTotals = visibleInvoices.reduce((acc, i) => {
@@ -1543,6 +1584,10 @@ function Statements() {
               <option value="paid">Paid only</option>
             </select>
           </div>
+          <div className="field">
+            <label>Search</label>
+            <input type="text" value={search} onChange={(e)=>setSearch(e.target.value)} placeholder="Invoice no., PO, customer…" />
+          </div>
           <div style={{ display: "flex", gap: 8 }}>
             <button className="btn-secondary" onClick={exportExcel}>Export Excel</button>
             <button className="btn-secondary" onClick={exportPDF}>Export PDF</button>
@@ -1565,7 +1610,7 @@ function Statements() {
                 <td>{i.due_date}</td><td>{i.paid_date || "—"}</td><td className={i.days_delayed > 0 ? "badge-overdue" : ""}>{i.days_delayed}</td>
               </tr>
             ))}
-            {visibleInvoices.length === 0 && <tr className="empty-row"><td colSpan="11">No invoices found.</td></tr>}
+            {visibleInvoices.length === 0 && <tr className="empty-row"><td colSpan="11">{invoices.length === 0 ? "No invoices found." : "No invoices match your search."}</td></tr>}
           </tbody>
           <tfoot>
             {Object.entries(currencyTotals).map(([cur, total]) => (
