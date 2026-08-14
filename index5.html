@@ -276,16 +276,22 @@ function Dashboard() {
     (async () => {
       const [{ count: openPos }, { data: summary }] = await Promise.all([
         ops().from("purchase_orders").select("*", { count: "exact", head: true }).eq("status", "open"),
-        ops().from("invoice_summary").select("balance_due"),
+        ops().from("invoice_summary").select("currency, balance_due, computed_status"),
       ]);
-      const allBalances = (summary || []).map(r => Number(r.balance_due || 0));
-      // Only count invoices where SATCO is owed money (balance > 0)
-      const openInvoices = allBalances.filter(b => b > 0).length;
-      // Total outstanding = sum of positive balances only (exclude overpayments)
-      const totalOutstanding = allBalances.filter(b => b > 0).reduce((s, b) => s + b, 0);
-      // Credits = sum of negative balances (overpayments by clients)
-      const totalCredits = allBalances.filter(b => b < 0).reduce((s, b) => s + Math.abs(b), 0);
-      setStats({ openPos: openPos || 0, openInvoices, totalOutstanding, totalCredits });
+      // Only invoices that are genuinely unpaid (status not paid) AND have a positive balance
+      // Using computed_status avoids cross-currency balance_due arithmetic errors
+      // e.g. EUR invoice paid in AED: balance_due = EUR value - AED payment = meaningless number
+      const unpaid = (summary || []).filter(r =>
+        r.computed_status !== "Paid" && Number(r.balance_due || 0) > 0
+      );
+      const openInvoices = unpaid.length;
+      // Group outstanding by currency so EUR and AED are never mixed
+      const outstandingByCurrency = unpaid.reduce((acc, r) => {
+        const cur = r.currency || "AED";
+        acc[cur] = (acc[cur] || 0) + Number(r.balance_due || 0);
+        return acc;
+      }, {});
+      setStats({ openPos: openPos || 0, openInvoices, outstandingByCurrency });
     })();
   }, []);
 
@@ -295,12 +301,14 @@ function Dashboard() {
     <div className="kpi-grid">
       <div className="kpi-card"><div className="kpi-label">Open Purchase Orders</div><div className="kpi-value">{stats.openPos}</div></div>
       <div className="kpi-card"><div className="kpi-label">Unpaid Invoices</div><div className="kpi-value">{stats.openInvoices}</div></div>
-      <div className="kpi-card"><div className="kpi-label">Total Outstanding</div><div className="kpi-value">{fmt(stats.totalOutstanding)}</div></div>
-      {stats.totalCredits > 0 && (
-        <div className="kpi-card" style={{ borderTop: "3px solid var(--primary)" }}>
-          <div className="kpi-label">Credits on Account</div>
-          <div className="kpi-value" style={{ color: "var(--primary)" }}>{fmt(stats.totalCredits)}</div>
+      {Object.entries(stats.outstandingByCurrency).map(([cur, total]) => (
+        <div className="kpi-card" key={cur}>
+          <div className="kpi-label">Outstanding ({cur})</div>
+          <div className="kpi-value">{fmt(total)}</div>
         </div>
+      ))}
+      {stats.openInvoices === 0 && (
+        <div className="kpi-card"><div className="kpi-label">Total Outstanding</div><div className="kpi-value">0.00</div></div>
       )}
     </div>
   );
