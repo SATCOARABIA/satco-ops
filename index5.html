@@ -276,19 +276,17 @@ function Dashboard() {
     (async () => {
       const [{ count: openPos }, { data: summary }] = await Promise.all([
         ops().from("purchase_orders").select("*", { count: "exact", head: true }).eq("status", "open"),
-        ops().from("invoice_summary").select("currency, balance_due, computed_status"),
+        ops().from("invoice_summary").select("currency, invoice_value, amount_paid, computed_status"),
       ]);
-      // Only invoices that are genuinely unpaid (status not paid) AND have a positive balance
-      // Using computed_status avoids cross-currency balance_due arithmetic errors
-      // e.g. EUR invoice paid in AED: balance_due = EUR value - AED payment = meaningless number
-      const unpaid = (summary || []).filter(r =>
-        r.computed_status !== "Paid" && Number(r.balance_due || 0) > 0
-      );
+      // computed_status is the single source of truth for paid/unpaid
+      // It is set by the view using balance_due <= 0, which correctly handles EUR invoices paid in AED
+      // For outstanding amounts we use invoice_value - amount_paid per currency (never mix currencies)
+      const unpaid = (summary || []).filter(r => r.computed_status !== "Paid");
       const openInvoices = unpaid.length;
-      // Group outstanding by currency so EUR and AED are never mixed
       const outstandingByCurrency = unpaid.reduce((acc, r) => {
         const cur = r.currency || "AED";
-        acc[cur] = (acc[cur] || 0) + Number(r.balance_due || 0);
+        const outstanding = Math.max(Number(r.invoice_value || 0) - Number(r.amount_paid || 0), 0);
+        acc[cur] = (acc[cur] || 0) + outstanding;
         return acc;
       }, {});
       setStats({ openPos: openPos || 0, openInvoices, outstandingByCurrency });
