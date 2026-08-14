@@ -274,13 +274,18 @@ function Dashboard() {
 
   useEffect(() => {
     (async () => {
-      const [{ count: openPos }, { count: openInvoices }, { data: summary }] = await Promise.all([
+      const [{ count: openPos }, { data: summary }] = await Promise.all([
         ops().from("purchase_orders").select("*", { count: "exact", head: true }).eq("status", "open"),
-        ops().from("invoices").select("*", { count: "exact", head: true }).neq("status", "paid"),
         ops().from("invoice_summary").select("balance_due"),
       ]);
-      const totalOutstanding = (summary || []).reduce((s, r) => s + Number(r.balance_due || 0), 0);
-      setStats({ openPos: openPos || 0, openInvoices: openInvoices || 0, totalOutstanding });
+      const allBalances = (summary || []).map(r => Number(r.balance_due || 0));
+      // Only count invoices where SATCO is owed money (balance > 0)
+      const openInvoices = allBalances.filter(b => b > 0).length;
+      // Total outstanding = sum of positive balances only (exclude overpayments)
+      const totalOutstanding = allBalances.filter(b => b > 0).reduce((s, b) => s + b, 0);
+      // Credits = sum of negative balances (overpayments by clients)
+      const totalCredits = allBalances.filter(b => b < 0).reduce((s, b) => s + Math.abs(b), 0);
+      setStats({ openPos: openPos || 0, openInvoices, totalOutstanding, totalCredits });
     })();
   }, []);
 
@@ -291,6 +296,12 @@ function Dashboard() {
       <div className="kpi-card"><div className="kpi-label">Open Purchase Orders</div><div className="kpi-value">{stats.openPos}</div></div>
       <div className="kpi-card"><div className="kpi-label">Unpaid Invoices</div><div className="kpi-value">{stats.openInvoices}</div></div>
       <div className="kpi-card"><div className="kpi-label">Total Outstanding</div><div className="kpi-value">{fmt(stats.totalOutstanding)}</div></div>
+      {stats.totalCredits > 0 && (
+        <div className="kpi-card" style={{ borderTop: "3px solid var(--primary)" }}>
+          <div className="kpi-label">Credits on Account</div>
+          <div className="kpi-value" style={{ color: "var(--primary)" }}>{fmt(stats.totalCredits)}</div>
+        </div>
+      )}
     </div>
   );
 }
