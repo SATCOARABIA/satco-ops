@@ -242,6 +242,7 @@ function Sidebar({ view, setView, mobileOpen, onCloseMobile }) {
     { id: "dashboard", label: "Dashboard" },
     { id: "pos", label: "Purchase Orders" },
     { id: "invoices", label: "Invoices" },
+    { id: "supplier_invoices", label: "Supplier Invoices" },
     { id: "pettycash", label: "Petty Cash" },
     { id: "statements", label: "Statements of Account" },
   ];
@@ -1668,6 +1669,248 @@ function Statements() {
   );
 }
 
+// ─── SUPPLIER INVOICES ───────────────────────────────────────────────────────
+// Reads from public.supplier_invoices (created in Finance Supabase project)
+// same SUPABASE_URL / sb client used throughout this file.
+
+const SI_STATUSES = ["Received","Approved","Due Soon","Paid","Disputed"];
+
+function siAddDays(dateStr, days) {
+  const d = new Date(dateStr);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().split("T")[0];
+}
+function siToday() { return new Date().toISOString().split("T")[0]; }
+function siFmtDate(d) { return d ? new Date(d).toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}) : "—"; }
+function siFmt(n) { return n == null ? "—" : Number(n).toLocaleString("en-AE",{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function siDaysUntil(d) { if (!d) return null; return Math.ceil((new Date(d)-new Date(siToday()))/86400000); }
+
+
+
+function SupplierInvoices() {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
+  const [detailRow, setDetailRow] = useState(null);
+
+  async function load() {
+    setLoading(true);
+    const { data, error } = await sb.from("supplier_invoices").select("*").order("created_at", { ascending: false });
+    if (!error) setRows(data || []);
+    setLoading(false);
+  }
+  useEffect(() => { load(); }, []);
+
+  const filtered = (rows || []).filter(r => {
+    const ms = statusFilter === "All" || r.status === statusFilter;
+    const q = search.toLowerCase();
+    const mq = !q || r.supplier_name?.toLowerCase().includes(q) || r.invoice_number?.toLowerCase().includes(q) || r.description?.toLowerCase().includes(q);
+    return ms && mq;
+  });
+
+  const stats = React.useMemo(() => {
+    const pending = rows.filter(r => !["Paid","Disputed"].includes(r.status));
+    const dueSoon = rows.filter(r => r.status === "Due Soon");
+    const overdue = rows.filter(r => r.status !== "Paid" && r.due_date && siDaysUntil(r.due_date) < 0);
+    const paidMo  = rows.filter(r => r.status === "Paid" && r.paid_date?.startsWith(siToday().substring(0,7)));
+    return {
+      total:      rows.length,
+      pendingAmt: pending.reduce((s,r) => s + (parseFloat(r.total_amount)||0), 0),
+      dueSoon:    dueSoon.length,
+      overdue:    overdue.length,
+      paidAmt:    paidMo.reduce((s,r) => s + (parseFloat(r.total_amount)||0), 0),
+    };
+  }, [rows]);
+
+  const badgeStyle = (status) => {
+    const map = {
+      Received:  { background:"#eff6ff", color:"#2563eb" },
+      Approved:  { background:"#f0f9ff", color:"#0369a1" },
+      "Due Soon":{ background:"#fef3c7", color:"#92400e" },
+      Paid:      { background:"#dcfce7", color:"#166534" },
+      Disputed:  { background:"#fee2e2", color:"#991b1b" },
+    };
+    return { padding:"2px 9px", borderRadius:999, fontSize:11, fontWeight:800, ...(map[status]||{background:"#f1f5f9",color:"#334155"}) };
+  };
+
+  // Detail overlay — read-only view of all fields
+  function DetailOverlay({ row, onClose }) {
+    const days = siDaysUntil(row.due_date);
+    const variance = row.variance;
+    return (
+      <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,.6)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20,backdropFilter:"blur(3px)"}}
+           onClick={e => e.target===e.currentTarget && onClose()}>
+        <div style={{background:"#fff",borderRadius:20,boxShadow:"0 20px 60px rgba(15,23,42,.2)",width:"100%",maxWidth:600,maxHeight:"88vh",overflowY:"auto",borderTop:"4px solid #0f172a"}}>
+          <div style={{padding:"16px 22px 12px",borderBottom:"1px solid #e2e8f0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{fontWeight:900,fontSize:15,color:"#0f172a"}}>📄 Invoice Detail — {row.invoice_number||"No number"}</div>
+            <button onClick={onClose} style={{width:30,height:30,borderRadius:"50%",border:"none",background:"#f1f5f9",cursor:"pointer",fontSize:16}}>×</button>
+          </div>
+          <div style={{padding:"18px 22px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:"10px 24px",fontSize:13}}>
+            {[
+              ["Supplier",        row.supplier_name],
+              ["Invoice #",       row.invoice_number||"—"],
+              ["Invoice Date",    siFmtDate(row.invoice_date)],
+              ["Invoice Month",   row.invoice_month||"—"],
+              ["Description",     row.description||"—"],
+              ["Hours",           row.hours??"—"],
+              ["Rate / Hr",       row.rate_per_hour ? `AED ${siFmt(row.rate_per_hour)}` : "—"],
+              ["Sub Total",       `AED ${siFmt(row.sub_total)}`],
+              ["VAT Rate",        `${row.vat_rate??0}%`],
+              ["VAT Amount",      `AED ${siFmt(row.vat_amount)}`],
+              ["Total Amount",    `AED ${siFmt(row.total_amount)}`],
+              ["Payment Terms",   `${row.payment_terms} days`],
+              ["Due Date",        siFmtDate(row.due_date)],
+              ["Reminder Date",   siFmtDate(row.reminder_date)],
+              ["Mob Portal Amt",  row.mob_portal_amount ? `AED ${siFmt(row.mob_portal_amount)}` : "Not set"],
+              ["Variance",        variance==null ? "—" : `AED ${siFmt(Math.abs(variance))} ${Math.abs(variance)<0.01?"✅":Math.abs(variance)<=50?"⚠️":"🚨"}`],
+              ["Status",          row.status],
+              ["Paid Date",       row.paid_date ? siFmtDate(row.paid_date) : "—"],
+              ["Payment Ref",     row.paid_reference||"—"],
+              ["Notes",           row.notes||"—"],
+            ].map(([label, val]) => (
+              <div key={label} style={{display:"flex",flexDirection:"column",gap:2}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:".04em"}}>{label}</div>
+                <div style={{fontWeight:600,color:"#0f172a"}}>{val}</div>
+              </div>
+            ))}
+          </div>
+          {row.image_url && (
+            <div style={{padding:"0 22px 18px"}}>
+              <a href={row.image_url} target="_blank" className="btn-secondary" style={{textDecoration:"none",display:"inline-flex",alignItems:"center",gap:6}}>
+                📎 View Invoice Document
+              </a>
+            </div>
+          )}
+          <div style={{padding:"12px 22px",borderTop:"1px solid #e2e8f0",background:"#f8fafc",borderRadius:"0 0 20px 20px",fontSize:12,color:"#94a3b8",textAlign:"center"}}>
+            Read-only — manage invoices in the Finance Portal
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {detailRow && <DetailOverlay row={detailRow} onClose={() => setDetailRow(null)} />}
+
+      {/* KPI STRIP */}
+      <div className="kpi-grid" style={{gridTemplateColumns:"repeat(5,minmax(0,1fr))"}}>
+        <div className="kpi-card">
+          <div className="kpi-label">Total Invoices</div>
+          <div className="kpi-value" style={{fontSize:22}}>{stats.total}</div>
+        </div>
+        <div className="kpi-card">
+          <div className="kpi-label">Outstanding (AED)</div>
+          <div className="kpi-value" style={{fontSize:18}}>{siFmt(stats.pendingAmt)}</div>
+        </div>
+        <div className="kpi-card" style={{borderLeft:"3px solid #d97706"}}>
+          <div className="kpi-label">⚠️ Due Soon</div>
+          <div className="kpi-value" style={{fontSize:22,color:"#d97706"}}>{stats.dueSoon}</div>
+        </div>
+        <div className="kpi-card" style={{borderLeft:"3px solid #dc2626"}}>
+          <div className="kpi-label">🚨 Overdue</div>
+          <div className="kpi-value" style={{fontSize:22,color:"#dc2626"}}>{stats.overdue}</div>
+        </div>
+        <div className="kpi-card" style={{borderLeft:"3px solid #166534"}}>
+          <div className="kpi-label">✅ Paid This Month</div>
+          <div className="kpi-value" style={{fontSize:18,color:"#166534"}}>{siFmt(stats.paidAmt)}</div>
+        </div>
+      </div>
+
+      {/* TOOLBAR */}
+      <div className="content-card">
+        <div className="section-head">
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+            <select className="btn-secondary" value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{padding:"7px 12px",borderRadius:10,fontSize:13}}>
+              <option value="All">All Statuses</option>
+              {SI_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <span style={{fontSize:12,color:"#94a3b8",fontStyle:"italic"}}>Manage invoices in Finance Portal</span>
+          </div>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            <input className="search-input" placeholder="Search supplier, invoice no., description…" value={search} onChange={e => setSearch(e.target.value)}/>
+            <button className="btn-secondary" onClick={load}>🔄</button>
+          </div>
+        </div>
+
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Supplier</th>
+                <th>Invoice #</th>
+                <th>Month</th>
+                <th>Description</th>
+                <th>Hrs</th>
+                <th>Rate</th>
+                <th>Amount (AED)</th>
+                <th>Mob Portal</th>
+                <th>Variance</th>
+                <th>Invoice Date</th>
+                <th>Due Date</th>
+                <th>Days</th>
+                <th>Terms</th>
+                <th>Status</th>
+                <th>View</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading && (
+                <tr><td colSpan={15} style={{textAlign:"center",padding:24,color:"#64748b"}}>Loading…</td></tr>
+              )}
+              {!loading && filtered.length === 0 && (
+                <tr><td colSpan={15} style={{textAlign:"center",padding:24,color:"#64748b"}}>No supplier invoices found</td></tr>
+              )}
+              {!loading && filtered.map(r => {
+                const days = siDaysUntil(r.due_date);
+                const daysLabel = r.status === "Paid" ? "Paid"
+                  : days == null ? "—"
+                  : days < 0 ? `${Math.abs(days)}d OVERDUE`
+                  : days === 0 ? "TODAY"
+                  : `${days}d`;
+                const daysStyle = r.status === "Paid"
+                  ? { color:"#166534", fontWeight:800 }
+                  : days != null && days < 0  ? { color:"#dc2626", fontWeight:800 }
+                  : days != null && days <= 3  ? { color:"#d97706", fontWeight:800 }
+                  : {};
+                const varNum = r.variance;
+                const varStyle = varNum == null ? {}
+                  : Math.abs(varNum) < 0.01 ? { color:"#166534", fontWeight:700 }
+                  : Math.abs(varNum) <= 50   ? { color:"#d97706", fontWeight:700 }
+                  : { color:"#dc2626", fontWeight:800 };
+                return (
+                  <tr key={r.id} className={r.status==="Paid"?"row-paid":""}>
+                    <td style={{fontWeight:700}}>{r.supplier_name}</td>
+                    <td style={{fontFamily:"monospace",fontSize:12}}>{r.invoice_number||"—"}</td>
+                    <td>{r.invoice_month||"—"}</td>
+                    <td style={{maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.description||"—"}</td>
+                    <td>{r.hours??"—"}</td>
+                    <td>{r.rate_per_hour??"—"}</td>
+                    <td style={{fontWeight:800}}>AED {siFmt(r.total_amount)}</td>
+                    <td>{r.mob_portal_amount ? `AED ${siFmt(r.mob_portal_amount)}` : <span style={{color:"#94a3b8"}}>—</span>}</td>
+                    <td style={varStyle}>{varNum==null?"—":`${varNum>=0?"+":""}${siFmt(varNum)}`}</td>
+                    <td>{siFmtDate(r.invoice_date)}</td>
+                    <td>{siFmtDate(r.due_date)}</td>
+                    <td style={daysStyle}>{daysLabel}</td>
+                    <td>{r.payment_terms}d</td>
+                    <td><span style={badgeStyle(r.status)}>{r.status}</span></td>
+                    <td>
+                      <button className="btn-mini" onClick={() => setDetailRow(r)}>👁 View</button>
+                      {r.image_url && <a href={r.image_url} target="_blank" className="btn-mini" style={{marginLeft:4,textDecoration:"none"}}>📎</a>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
+  );
+}
+
+
 function App() {
   const session = useAuth();
   const [view, setView] = useState("dashboard");
@@ -1680,6 +1923,7 @@ function App() {
     dashboard: ["Dashboard", "Overview of open POs, unpaid invoices, and outstanding balance"],
     pos: ["Purchase Orders", "Upload POs and let AI pull the fields for review"],
     invoices: ["Invoices", "Raise invoices against POs with auto-generated numbers"],
+    supplier_invoices: ["Supplier Invoices", "Capture, validate, and track payments to suppliers — AI scan, mob portal check, 30/45-day terms"],
     pettycash: ["Petty Cash", "Track small day-to-day office expenses"],
     statements: ["Statements of Account", "Per-client balance, aging, and export"],
   };
@@ -1705,6 +1949,7 @@ function App() {
         {view === "dashboard" && <Dashboard />}
         {view === "pos" && <PurchaseOrders />}
         {view === "invoices" && <Invoices />}
+        {view === "supplier_invoices" && <SupplierInvoices />}
         {view === "pettycash" && <PettyCash />}
         {view === "statements" && <Statements />}
       </main>
