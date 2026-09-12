@@ -920,9 +920,9 @@ function Invoices() {
           <tbody>
             {visibleInvoices.map((inv) => (
               editingId === inv.id ? (
-                <EditInvoiceRow key={inv.id} inv={inv} colSpan={15} onCancel={() => setEditingId(null)} onSaved={() => { setEditingId(null); load(); }} />
+                <EditInvoiceRow key={inv.id} inv={inv} colSpan={17} onCancel={() => setEditingId(null)} onSaved={() => { setEditingId(null); load(); }} />
               ) : payingId === inv.id ? (
-                <ManagePaymentsRow key={inv.id} inv={inv} colSpan={15} onClose={() => setPayingId(null)} onChanged={() => load()} />
+                <ManagePaymentsRow key={inv.id} inv={inv} colSpan={17} onClose={() => setPayingId(null)} onChanged={() => load()} />
               ) : (
                 <tr key={inv.id} className={inv.computed_status === "Paid" ? "row-paid" : ""}>
                   <td>{inv.invoice_no}</td><td>{inv.invoice_date}</td><td>{inv.po_no}</td><td>{inv.customer_name}</td>
@@ -1719,7 +1719,8 @@ function SupplierInvoices() {
       pendingAmt: pending.reduce((s,r) => s + (parseFloat(r.total_amount)||0), 0),
       dueSoon:    dueSoon.length,
       overdue:    overdue.length,
-      paidAmt:    paidMo.reduce((s,r) => s + (parseFloat(r.total_amount)||0), 0),
+      paidAmt:    paidMo.reduce((s,r) => s + (parseFloat(r.paid_amount||r.total_amount)||0), 0),
+      paidCount:  paidMo.length,
     };
   }, [rows]);
 
@@ -1765,9 +1766,16 @@ function SupplierInvoices() {
               ["Mob Portal Amt",  row.mob_portal_amount ? `AED ${siFmt(row.mob_portal_amount)}` : "Not set"],
               ["Variance",        variance==null ? "—" : `AED ${siFmt(Math.abs(variance))} ${Math.abs(variance)<0.01?"✅":Math.abs(variance)<=50?"⚠️":"🚨"}`],
               ["Status",          row.status],
-              ["Paid Date",       row.paid_date ? siFmtDate(row.paid_date) : "—"],
-              ["Payment Ref",     row.paid_reference||"—"],
-              ["Notes",           row.notes||"—"],
+              ["Invoice Date",     siFmtDate(row.invoice_date)],
+              ["Supplier Due Date",row.supplier_due_date ? siFmtDate(row.supplier_due_date)+" ("+row.supplier_payment_terms+"d)" : "—"],
+              ["SATCO Due Date",   row.satco_due_date ? siFmtDate(row.satco_due_date)+" ("+row.satco_payment_days+"d)" : "—"],
+              ["Paid Date",        row.paid_date ? siFmtDate(row.paid_date) : "—"],
+              ["Amount Paid",      row.paid_amount ? siFmtAed(row.paid_amount) : "—"],
+              ["Payment Mode",     row.paid_mode ? row.paid_mode.replace(/_/g," ") : "—"],
+              ["Bank",             row.paid_bank||"—"],
+              ["Cheque No.",       row.paid_cheque_no||"—"],
+              ["Transaction Ref",  row.paid_transaction_ref||"—"],
+              ["Notes",            row.notes||"—"],
             ].map(([label, val]) => (
               <div key={label} style={{display:"flex",flexDirection:"column",gap:2}}>
                 <div style={{fontSize:11,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:".04em"}}>{label}</div>
@@ -1815,6 +1823,7 @@ function SupplierInvoices() {
         <div className="kpi-card" style={{borderLeft:"3px solid #166534"}}>
           <div className="kpi-label">✅ Paid This Month</div>
           <div className="kpi-value" style={{fontSize:18,color:"#166534"}}>{siFmt(stats.paidAmt)}</div>
+          <div style={{fontSize:11,color:"#64748b",marginTop:2}}>{stats.paidCount} invoice(s)</div>
         </div>
       </div>
 
@@ -1848,22 +1857,23 @@ function SupplierInvoices() {
                 <th>Mob Portal</th>
                 <th>Variance</th>
                 <th>Invoice Date</th>
-                <th>Due Date</th>
+                <th>Supplier Due</th>
+                <th>SATCO Due</th>
                 <th>Days</th>
-                <th>Terms</th>
                 <th>Status</th>
+                <th>Payment</th>
                 <th>View</th>
               </tr>
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={15} style={{textAlign:"center",padding:24,color:"#64748b"}}>Loading…</td></tr>
+                <tr><td colSpan={17} style={{textAlign:"center",padding:24,color:"#64748b"}}>Loading…</td></tr>
               )}
               {!loading && filtered.length === 0 && (
-                <tr><td colSpan={15} style={{textAlign:"center",padding:24,color:"#64748b"}}>No supplier invoices found</td></tr>
+                <tr><td colSpan={17} style={{textAlign:"center",padding:24,color:"#64748b"}}>No supplier invoices found</td></tr>
               )}
               {!loading && filtered.map(r => {
-                const days = siDaysUntil(r.due_date);
+                const days = siDaysUntil(r.satco_due_date || r.due_date);
                 const daysLabel = r.status === "Paid" ? "Paid"
                   : days == null ? "—"
                   : days < 0 ? `${Math.abs(days)}d OVERDUE`
@@ -1880,21 +1890,40 @@ function SupplierInvoices() {
                   : Math.abs(varNum) <= 50   ? { color:"#d97706", fontWeight:700 }
                   : { color:"#dc2626", fontWeight:800 };
                 return (
-                  <tr key={r.id} className={r.status==="Paid"?"row-paid":""}>
+                  <tr key={r.id} style={{background:r.status==="Paid"?"#dcfce7":r.status==="Due Soon"?"#fffbeb":r.status==="Disputed"?"#fef2f2":""}}>
                     <td style={{fontWeight:700}}>{r.supplier_name}</td>
                     <td style={{fontFamily:"monospace",fontSize:12}}>{r.invoice_number||"—"}</td>
                     <td>{r.invoice_month||"—"}</td>
                     <td style={{maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.description||"—"}</td>
                     <td>{r.hours??"—"}</td>
                     <td>{r.rate_per_hour??"—"}</td>
-                    <td style={{fontWeight:800}}>AED {siFmt(r.total_amount)}</td>
+                    <td style={{fontWeight:800}}>
+                      AED {siFmt(r.total_amount)}
+                      {r.paid_amount && r.status==="Paid" && parseFloat(r.paid_amount)!==parseFloat(r.total_amount) && 
+                        <div style={{fontSize:10,color:"#166534",fontWeight:600}}>Paid: AED {siFmt(r.paid_amount)}</div>}
+                    </td>
                     <td>{r.mob_portal_amount ? `AED ${siFmt(r.mob_portal_amount)}` : <span style={{color:"#94a3b8"}}>—</span>}</td>
                     <td style={varStyle}>{varNum==null?"—":`${varNum>=0?"+":""}${siFmt(varNum)}`}</td>
                     <td>{siFmtDate(r.invoice_date)}</td>
-                    <td>{siFmtDate(r.due_date)}</td>
+                    <td style={{color:"#d97706",fontWeight:600,fontSize:12}}>
+                      {siFmtDate(r.supplier_due_date||r.due_date)}
+                      {r.supplier_payment_terms && <div style={{fontSize:10,color:"#94a3b8"}}>{r.supplier_payment_terms}d</div>}
+                    </td>
+                    <td style={{color:"#166534",fontWeight:700}}>
+                      {siFmtDate(r.satco_due_date||r.due_date)}
+                      {r.satco_payment_days && <div style={{fontSize:10,color:"#94a3b8"}}>{r.satco_payment_days}d</div>}
+                    </td>
                     <td style={daysStyle}>{daysLabel}</td>
-                    <td>{r.payment_terms}d</td>
                     <td><span style={badgeStyle(r.status)}>{r.status}</span></td>
+                    <td style={{fontSize:11,minWidth:110}}>
+                      {r.status==="Paid"
+                        ? <div>
+                            <div style={{color:"#166534",fontWeight:800}}>{siFmtDate(r.paid_date)}</div>
+                            <div style={{color:"#64748b"}}>{siFmtAed(r.paid_amount||r.total_amount)}</div>
+                            <div style={{color:"#94a3b8",fontSize:10}}>{r.paid_mode==="cheque"?"CHQ "+r.paid_cheque_no:r.paid_mode==="bank_transfer"?"TRF "+r.paid_transaction_ref:"Cash"} {r.paid_bank?"· "+r.paid_bank:""}</div>
+                          </div>
+                        : <span style={{color:"#cbd5e1"}}>Pending</span>}
+                    </td>
                     <td>
                       <button className="btn-mini" onClick={() => setDetailRow(r)}>👁 View</button>
                       {r.image_url && <a href={r.image_url} target="_blank" className="btn-mini" style={{marginLeft:4,textDecoration:"none"}}>📎</a>}
