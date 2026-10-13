@@ -1563,15 +1563,143 @@ function Statements() {
   }
 
   function exportPDF() {
-    const doc = new jspdf.jsPDF();
-    doc.text("Statement of Account", 14, 16);
-    doc.autoTable({
-      startY: 22,
-      head: [["Invoice No.", "Date", "PO", "Customer", "Cur.", "Value", "Paid", "Balance", "Due", "Paid Date", "Days Late"]],
-      body: visibleInvoices.map((i) => [i.invoice_no, i.invoice_date, i.po_no, i.customer_name, i.currency || "AED", fmt(i.invoice_value), fmt(i.amount_paid), fmt(i.balance_due), i.due_date, i.paid_date || "—", i.days_delayed]),
-      foot: Object.entries(currencyTotals).map(([cur, total]) => ["", "", "", "", "", "", "", "Total (" + cur + "): " + fmt(total), "", "", ""]),
+    // A4 landscape, fixed column widths so names/POs never wrap letter-by-letter
+    const doc = new jspdf.jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const M = 12;
+    const NAVY = [15, 23, 42];
+    const GOLD = [184, 134, 11];
+
+    const poCustomerId = poId ? (pos.find((p) => p.id === poId) || {}).customer_id : null;
+    const selCustomer = customers.find((c) => c.id === (customerId || poCustomerId));
+    const selPo = poId ? pos.find((p) => p.id === poId) : null;
+    const today = new Date();
+    const todayStr = today.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+    const fmtD = (d) => {
+      if (!d) return "—";
+      const x = new Date(d);
+      return isNaN(x) ? d : x.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+    };
+
+    // ── Header band
+    doc.setFillColor(...NAVY);
+    doc.rect(0, 0, pageW, 24, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(15);
+    doc.text("SATCO ARABIA GENERAL CONTRACTING LLC – SPC", M, 11);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8.5);
+    doc.text("Abu Dhabi, United Arab Emirates  |  accounts@satcoarabiaengg.com  |  www.satcoarabiaengg.com", M, 17);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(16);
+    doc.text("STATEMENT OF ACCOUNT", pageW - M, 14, { align: "right" });
+    doc.setFillColor(...GOLD);
+    doc.rect(0, 24, pageW, 1.2, "F");
+
+    // ── Bill-to / statement info block
+    doc.setTextColor(...NAVY);
+    doc.setFontSize(9); doc.setFont("helvetica", "bold");
+    doc.text("TO:", M, 33);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(10.5);
+    doc.text(selCustomer ? selCustomer.name : "All Customers", M + 9, 33);
+    if (selPo) { doc.setFontSize(9); doc.text("Purchase Order: " + selPo.po_no, M + 9, 38.5); }
+
+    const infoX = pageW - M - 70;
+    doc.setFontSize(9);
+    const info = [
+      ["Statement Date:", todayStr],
+      ["Filter:", statusFilter === "unpaid" ? "Unpaid invoices" : statusFilter === "paid" ? "Paid invoices" : "All invoices"],
+      ["No. of Invoices:", String(visibleInvoices.length)],
+    ];
+    info.forEach(([k, v], idx) => {
+      doc.setFont("helvetica", "bold"); doc.text(k, infoX, 33 + idx * 5);
+      doc.setFont("helvetica", "normal"); doc.text(v, pageW - M, 33 + idx * 5, { align: "right" });
     });
-    doc.save("statement_of_account.pdf");
+
+    // ── Main table
+    const showCustomerCol = !selCustomer;
+    const head = ["Invoice No.", "Inv. Date", "PO No.", ...(showCustomerCol ? ["Customer"] : []), "Cur.", "Invoice Value", "Paid", "Balance Due", "Due Date", "Paid Date", "Days Late"];
+    const body = visibleInvoices.map((i) => [
+      i.invoice_no, fmtD(i.invoice_date), i.po_no || "—", ...(showCustomerCol ? [i.customer_name || ""] : []),
+      i.currency || "AED", fmt(i.invoice_value), fmt(i.amount_paid), fmt(i.balance_due),
+      fmtD(i.due_date), i.paid_date ? fmtD(i.paid_date) : "—", String(i.days_delayed ?? 0),
+    ]);
+    const foot = Object.entries(currencyTotals).map(([cur, total]) => {
+      const valTot = visibleInvoices.filter((i) => (i.currency || "AED") === cur).reduce((s, i) => s + Number(i.invoice_value || 0), 0);
+      const paidTot = visibleInvoices.filter((i) => (i.currency || "AED") === cur).reduce((s, i) => s + Number(i.amount_paid || 0), 0);
+      const lead = showCustomerCol ? 5 : 4;
+      return [{ content: "TOTAL (" + cur + ")", colSpan: lead, styles: { halign: "right" } }, fmt(valTot), fmt(paidTot), fmt(total), { content: "", colSpan: 3 }];
+    });
+
+    // Column widths (mm) — total usable width is 273mm on A4 landscape with 12mm margins
+    const w = showCustomerCol
+      ? [26, 22, 32, 48, 12, 26, 24, 26, 22, 22, 13]
+      : [32, 26, 48, 14, 30, 28, 30, 26, 26, 13];
+    const colStyles = {};
+    w.forEach((cw, idx) => { colStyles[idx] = { cellWidth: cw }; });
+    const align = (label, h) => { const c = head.indexOf(label); colStyles[c] = { ...colStyles[c], halign: h }; };
+    ["Invoice Value", "Paid", "Balance Due"].forEach((l) => align(l, "right"));
+    ["Cur.", "Inv. Date", "Due Date", "Paid Date", "Days Late"].forEach((l) => align(l, "center"));
+
+    doc.autoTable({
+      startY: 48,
+      margin: { left: M, right: M, bottom: 16 },
+      head: [head], body, foot,
+      theme: "grid",
+      styles: { font: "helvetica", fontSize: 8.5, cellPadding: 2, overflow: "linebreak", valign: "middle", lineColor: [203, 213, 225], lineWidth: 0.2, textColor: [15, 23, 42] },
+      headStyles: { fillColor: NAVY, textColor: 255, fontStyle: "bold", halign: "center" },
+      footStyles: { fillColor: [224, 242, 254], textColor: NAVY, fontStyle: "bold", halign: "right" },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      columnStyles: colStyles,
+      showFoot: "lastPage",
+      didParseCell: (data) => {
+        if (data.section === "body" && data.column.index === head.length - 1 && Number(data.cell.raw) > 0) {
+          data.cell.styles.textColor = [220, 38, 38];
+          data.cell.styles.fontStyle = "bold";
+        }
+        if (data.section === "body" && data.column.index === head.length - 4) data.cell.styles.fontStyle = "bold"; // balance
+      },
+      didDrawPage: () => {
+        const n = doc.internal.getNumberOfPages();
+        doc.setFontSize(7.5); doc.setTextColor(100, 116, 139); doc.setFont("helvetica", "normal");
+        doc.text("This is a system-generated statement. Please notify accounts@satcoarabiaengg.com of any discrepancy within 7 days.", M, pageH - 8);
+        doc.text("Page " + n, pageW - M, pageH - 8, { align: "right" });
+      },
+    });
+
+    // ── Aging summary + amount due box (kept together; new page if not enough room)
+    let y = doc.lastAutoTable.finalY + 8;
+    if (y > pageH - 60) { doc.addPage(); y = 20; }
+    const mainCur = Object.keys(currencyTotals)[0] || "AED";
+    doc.autoTable({
+      startY: y,
+      margin: { left: M },
+      tableWidth: 110,
+      head: [["Aging Summary", "Amount (" + mainCur + ")"]],
+      body: buckets.map((b) => [b.label, fmt(b.total)]),
+      theme: "grid",
+      styles: { fontSize: 8.5, cellPadding: 1.8, lineColor: [203, 213, 225], lineWidth: 0.2, textColor: [15, 23, 42] },
+      headStyles: { fillColor: NAVY, textColor: 255, fontStyle: "bold" },
+      columnStyles: { 1: { halign: "right" } },
+      didParseCell: (data) => {
+        if (data.section === "body" && data.row.index > 0 && Number(String(data.cell.raw).replace(/,/g, "")) > 0 && data.column.index === 1) {
+          data.cell.styles.textColor = [220, 38, 38]; data.cell.styles.fontStyle = "bold";
+        }
+      },
+    });
+
+    const boxW = 95, boxX = pageW - M - boxW;
+    const totalsArr = Object.entries(currencyTotals);
+    const boxH = 12 + totalsArr.length * 8;
+    doc.setFillColor(...NAVY);
+    doc.roundedRect(boxX, y, boxW, boxH, 2, 2, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+    doc.text("TOTAL AMOUNT OUTSTANDING", boxX + 5, y + 7);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(14);
+    totalsArr.forEach(([cur, total], idx) => doc.text(cur + " " + fmt(total), boxX + boxW - 5, y + 15 + idx * 8, { align: "right" }));
+
+    const custSlug = selCustomer ? selCustomer.name.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_|_$/g, "") : "All_Customers";
+    doc.save("SOA_" + custSlug + "_" + today.toISOString().slice(0, 10) + ".pdf");
   }
 
   function emailStatement() {
