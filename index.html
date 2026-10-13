@@ -1811,6 +1811,7 @@ function siAddDays(dateStr, days) {
 function siToday() { return new Date().toISOString().split("T")[0]; }
 function siFmtDate(d) { return d ? new Date(d).toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}) : "—"; }
 function siFmt(n) { return n == null ? "—" : Number(n).toLocaleString("en-AE",{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function siFmtAed(n) { return n == null || n === "" ? "—" : "AED " + siFmt(n); }
 function siDaysUntil(d) { if (!d) return null; return Math.ceil((new Date(d)-new Date(siToday()))/86400000); }
 
 
