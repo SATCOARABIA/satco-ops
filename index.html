@@ -337,6 +337,17 @@ async function viewFile(bucket, path) {
   window.open(data.signedUrl, "_blank");
 }
 
+// Opens a document saved by the Finance portal (stored as ".../object/public/<bucket>/<path>")
+// through a short-lived signed link, so the storage bucket can stay private.
+async function openStoredDoc(url) {
+  const m = /\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^/]+)\/([^?#]+)/.exec(url || "");
+  if (!m) { if (url) window.open(url, "_blank"); return; }
+  const win = window.open("", "_blank");
+  const { data, error } = await sb.storage.from(m[1]).createSignedUrl(decodeURIComponent(m[2]), 600);
+  if (error || !data?.signedUrl) { if (win) win.close(); alert("Couldn't open document: " + (error?.message || "unknown error")); return; }
+  if (win) win.location.href = data.signedUrl; else window.open(data.signedUrl, "_blank");
+}
+
 function useAuth() {
   const [session, setSession] = useState(undefined); // undefined = loading, null = signed out
   useEffect(() => {
@@ -2076,9 +2087,9 @@ function SupplierInvoices() {
           </div>
           {row.image_url && (
             <div style={{padding:"0 22px 18px"}}>
-              <a href={row.image_url} target="_blank" className="btn-secondary" style={{textDecoration:"none",display:"inline-flex",alignItems:"center",gap:6}}>
+              <button type="button" onClick={() => openStoredDoc(row.image_url)} className="btn-secondary" style={{display:"inline-flex",alignItems:"center",gap:6}}>
                 📎 View Invoice Document
-              </a>
+              </button>
             </div>
           )}
           <div style={{padding:"12px 22px",borderTop:"1px solid #e2e8f0",background:"#f8fafc",borderRadius:"0 0 20px 20px",fontSize:12,color:"#94a3b8",textAlign:"center"}}>
@@ -2217,7 +2228,7 @@ function SupplierInvoices() {
                     </td>
                     <td>
                       <button className="btn-mini" onClick={() => setDetailRow(r)}>👁 View</button>
-                      {r.image_url && <a href={r.image_url} target="_blank" className="btn-mini" style={{marginLeft:4,textDecoration:"none"}}>📎</a>}
+                      {r.image_url && <button type="button" onClick={() => openStoredDoc(r.image_url)} className="btn-mini" style={{marginLeft:4}}>📎</button>}
                     </td>
                   </tr>
                 );
