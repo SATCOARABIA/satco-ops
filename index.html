@@ -412,7 +412,7 @@ function Sidebar({ view, setView, mobileOpen, onCloseMobile }) {
   const items = [
     { id: "dashboard", label: "Dashboard" },
     { id: "pos", label: "Purchase Orders" },
-    { id: "invoices", label: "Invoices" },
+    { id: "invoices", label: "Customer Invoices" },
     { id: "supplier_invoices", label: "Supplier Invoices" },
     { id: "pettycash", label: "Petty Cash" },
     { id: "statements", label: "Statements of Account" },
@@ -722,7 +722,11 @@ function PurchaseOrders() {
 }
 
 function EditInvoiceRow({ inv, colSpan, onCancel, onSaved }) {
+  const [custList, setCustList] = useState([]);
+  useEffect(() => { if (!inv.po_id) ops().from("customers").select("id, name").order("name").then(({ data }) => setCustList(data || [])); }, []);
   const [form, setForm] = useState({
+    customer_id: inv.customer_id || "",
+    new_customer: "",
     invoice_no: inv.invoice_no || "",
     invoice_date: inv.invoice_date || "",
     currency: inv.currency || "AED",
@@ -740,7 +744,20 @@ function EditInvoiceRow({ inv, colSpan, onCancel, onSaved }) {
     setErr(null);
     const invoiceNo = (form.invoice_no || "").trim();
     if (!invoiceNo) { setErr("Invoice No. is required."); setSaving(false); return; }
+    let customerPatch = {};
+    if (!inv.po_id) {
+      let cid = form.customer_id;
+      if (cid === "__new") {
+        const name = (form.new_customer || "").trim();
+        if (!name) { setErr("Enter the new customer's name."); setSaving(false); return; }
+        const ex = custList.find(c => c.name.trim().toLowerCase() === name.toLowerCase());
+        if (ex) cid = ex.id;
+        else { const { data: nc, error: cErr } = await ops().from("customers").insert({ name, payment_terms_days: 30 }).select("id").single(); if (cErr) { setErr(cErr.message); setSaving(false); return; } cid = nc.id; }
+      }
+      customerPatch = { customer_id: cid || null };
+    }
     const payload = {
+      ...customerPatch,
       invoice_no: invoiceNo,
       invoice_date: form.invoice_date,
       currency: form.currency,
@@ -764,6 +781,15 @@ function EditInvoiceRow({ inv, colSpan, onCancel, onSaved }) {
       <td colSpan={colSpan}>
         {err && <div className="alert-card">{err}</div>}
         <div className="form-grid">
+          {!inv.po_id && <div className="field">
+            <label>Customer (no PO)</label>
+            <select value={form.customer_id} onChange={(e)=>setForm({...form, customer_id:e.target.value})}>
+              <option value="">— Select customer —</option>
+              {custList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              <option value="__new">＋ New customer…</option>
+            </select>
+          </div>}
+          {!inv.po_id && form.customer_id === "__new" && <div className="field"><label>New Customer Name</label><input value={form.new_customer} onChange={(e)=>setForm({...form, new_customer:e.target.value})} /></div>}
           <div className="field"><label>Invoice No.</label><input value={form.invoice_no} onChange={(e)=>setForm({...form, invoice_no:e.target.value})} /></div>
           <div className="field"><label>Invoice Date</label><input type="date" value={form.invoice_date} onChange={(e)=>setForm({...form, invoice_date:e.target.value})} /></div>
           <div className="field"><label>Invoice Period - From</label><input type="date" value={form.period_from} onChange={(e)=>setForm({...form, period_from:e.target.value})} /></div>
@@ -958,14 +984,20 @@ function Invoices() {
   const [payingId, setPayingId] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
   const [search, setSearch] = useState("");
+  const [customers, setCustomers] = useState([]);
+  const [poSel, setPoSel] = useState("");          // PO id, or "__nopo" for a customer without a PO
+  const [custSel, setCustSel] = useState("");      // customer id, or "__new"
+  const [newCust, setNewCust] = useState("");
 
   async function load() {
-    const [{ data: inv }, { data: p }] = await Promise.all([
+    const [{ data: inv }, { data: p }, { data: c }] = await Promise.all([
       ops().from("invoice_summary").select("*").order("invoice_date", { ascending: false }),
       ops().from("purchase_orders").select("id, po_no, po_value, payment_terms_days, customer_id, customers(name)").neq("status", "closed"),
+      ops().from("customers").select("id, name, payment_terms_days").order("name"),
     ]);
     setInvoices(inv || []);
     setOpenPos(p || []);
+    setCustomers(c || []);
   }
   useEffect(() => { load(); }, []);
 
@@ -999,8 +1031,28 @@ function Invoices() {
       const periodFrom = f.get("period_from") || null;
       const periodTo = f.get("period_to") || null;
       const invoiceNoOverride = (f.get("invoice_no") || "").trim();
-      const po = openPos.find((p) => p.id === poId);
-      if (!po) throw new Error("Select a valid PO");
+      const noPo = poId === "__nopo";
+      const po = noPo ? null : openPos.find((p) => p.id === poId);
+      if (!noPo && !po) throw new Error("Select a PO, or choose “No PO — customer only”");
+      // Customer without a PO: pick an existing customer or add a new one
+      let customerId = po ? po.customer_id : null, terms = po ? (po.payment_terms_days || 30) : 30;
+      if (noPo) {
+        if (custSel === "__new") {
+          const name = newCust.trim();
+          if (!name) throw new Error("Enter the new customer's name");
+          const existing = customers.find(c => c.name.trim().toLowerCase() === name.toLowerCase());
+          if (existing) { customerId = existing.id; terms = existing.payment_terms_days || 30; }
+          else {
+            const { data: nc, error: cErr } = await ops().from("customers").insert({ name, payment_terms_days: 30 }).select("id").single();
+            if (cErr) throw cErr;
+            customerId = nc.id;
+          }
+        } else {
+          const c = customers.find(c => c.id === custSel);
+          if (!c) throw new Error("Select the customer");
+          customerId = c.id; terms = c.payment_terms_days || 30;
+        }
+      }
 
       let invoiceNo = invoiceNoOverride;
       if (!invoiceNo) {
@@ -1021,18 +1073,19 @@ function Invoices() {
       const { error: insErr } = await ops().from("invoices").insert({
         invoice_no: invoiceNo,
         invoice_date: invoiceDate,
-        po_id: po.id,
-        customer_id: po.customer_id,
+        po_id: po ? po.id : null,
+        customer_id: customerId,
         invoice_value: invoiceValue,
         currency,
         period_from: periodFrom,
         period_to: periodTo,
-        payment_terms_days: po.payment_terms_days || 30,
+        payment_terms_days: terms,
         status: "draft",
         source_file_url: sourceFileUrl,
       });
       if (insErr) throw insErr;
       e.target.reset();
+      setPoSel(""); setCustSel(""); setNewCust("");
       load();
     } catch (err) {
       setError(err.message || "Failed to create invoice");
@@ -1050,18 +1103,32 @@ function Invoices() {
 
   return (
     <div>
+      <MonthStatusPanel kind="customer" />
       <div className="content-card">
-        <h3>Raise a new invoice against a PO</h3>
+        <h3>Raise a new customer invoice</h3>
         <form onSubmit={handleSubmit} className="form-grid">
           <div className="field">
             <label>Purchase Order</label>
-            <select name="po_id" required>
+            <select name="po_id" required value={poSel} onChange={e => setPoSel(e.target.value)}>
               <option value="">Select PO…</option>
+              <option value="__nopo">— No PO (customer only) —</option>
               {openPos.map((po) => (
                 <option key={po.id} value={po.id}>{po.po_no} — {po.customers?.name || "Unknown"} ({fmt(po.po_value)})</option>
               ))}
             </select>
           </div>
+          {poSel === "__nopo" && <div className="field">
+            <label>Customer</label>
+            <select required value={custSel} onChange={e => setCustSel(e.target.value)}>
+              <option value="">Select customer…</option>
+              {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              <option value="__new">＋ New customer…</option>
+            </select>
+          </div>}
+          {poSel === "__nopo" && custSel === "__new" && <div className="field">
+            <label>New Customer Name</label>
+            <input required value={newCust} onChange={e => setNewCust(e.target.value)} placeholder="e.g. PSN" />
+          </div>}
           <div className="field"><label>Invoice Date</label><input type="date" name="invoice_date" required /></div>
           <div className="field"><label>Invoice Period - From</label><input type="date" name="period_from" /></div>
           <div className="field"><label>Invoice Period - To</label><input type="date" name="period_to" /></div>
@@ -1084,7 +1151,7 @@ function Invoices() {
 
       <div className="content-card">
         <div className="section-head">
-          <h3>Invoices</h3>
+          <h3>Customer Invoices</h3>
           <input type="text" className="search-input" value={search} onChange={(e)=>setSearch(e.target.value)} placeholder="Search invoice no., PO, customer, status…" />
         </div>
         <div className="table-scroll">
@@ -1093,12 +1160,12 @@ function Invoices() {
           <tbody>
             {visibleInvoices.map((inv) => (
               editingId === inv.id ? (
-                <EditInvoiceRow key={inv.id} inv={inv} colSpan={17} onCancel={() => setEditingId(null)} onSaved={() => { setEditingId(null); load(); }} />
+                <EditInvoiceRow key={inv.id} inv={inv} colSpan={15} onCancel={() => setEditingId(null)} onSaved={() => { setEditingId(null); load(); }} />
               ) : payingId === inv.id ? (
-                <ManagePaymentsRow key={inv.id} inv={inv} colSpan={17} onClose={() => setPayingId(null)} onChanged={() => load()} />
+                <ManagePaymentsRow key={inv.id} inv={inv} colSpan={15} onClose={() => setPayingId(null)} onChanged={() => load()} />
               ) : (
                 <tr key={inv.id} className={inv.computed_status === "Paid" ? "row-paid" : ""}>
-                  <td>{inv.invoice_no}</td><td>{inv.invoice_date}</td><td>{inv.po_no}</td><td>{inv.customer_name}</td>
+                  <td>{inv.invoice_no}</td><td>{inv.invoice_date}</td><td>{inv.po_no || <span style={{color:"#94a3b8"}}>No PO</span>}</td><td>{inv.customer_name || <span style={{color:"#dc2626",fontWeight:700}}>⚠ No customer — Edit</span>}</td>
                   <td>{inv.period_from || "—"}</td><td>{inv.period_to || "—"}</td>
                   <td>{inv.currency || "AED"}</td><td>{fmt(inv.invoice_value)}</td><td>{fmt(inv.amount_paid)}</td><td>{fmt(inv.balance_due)}</td>
                   <td>{inv.due_date}</td>
@@ -1970,6 +2037,86 @@ function Statements() {
   );
 }
 
+// ─── PREVIOUS-MONTH STATUS (read-only) ───────────────────────────────────────
+// Same data as the Mobilisation portal's Supplier / Customer Status tabs (satco-finance /api/month-status).
+const msShort = t => String(t || "").replace(/[,\-–]/g, " ").split(/\s+/).filter(Boolean).slice(0, 2).join(" ");
+function MonthStatusPanel({ kind }) {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState("");
+  const [open, setOpen] = useState(true);
+  async function load() {
+    setErr("");
+    try {
+      const { data: { session } } = await sb.auth.getSession();
+      const res = await fetch("https://satco-finance.vercel.app/api/month-status", { headers: { Authorization: "Bearer " + (session ? session.access_token : "") } });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || ("HTTP " + res.status));
+      setData(j);
+    } catch (e) { setErr(e.message); }
+  }
+  useEffect(() => { load(); }, []);
+  const fmtD = d => d ? new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) : "";
+  const money = (v, c) => (c || "AED") + " " + Number(v || 0).toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const chip = (ok, label, sub) => <span style={{ padding: "3px 9px", borderRadius: 999, fontSize: 11, fontWeight: 800, whiteSpace: "nowrap", border: "1px solid " + (ok ? "#86efac" : "#fecaca"), background: ok ? "#dcfce7" : "#fef2f2", color: ok ? "#166534" : "#b91c1c" }}>{label}{sub ? <span style={{ fontWeight: 600, marginLeft: 4, opacity: .8 }}>{sub}</span> : null}</span>;
+  const monthLabel = data ? new Date(data.month + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" }) : "previous month";
+  const rows = data ? (kind === "supplier" ? data.suppliers : data.customers) : [];
+  const tot = rows.length;
+  const k1 = kind === "supplier" ? rows.filter(r => r.ts_sent).length : rows.filter(r => r.ts_sent).length;
+  const k2 = kind === "supplier" ? rows.filter(r => r.invoice_received).length : rows.filter(r => (r.invoices || []).length).length;
+  const k3 = kind === "supplier" ? rows.filter(r => r.finance && r.finance.status === "Paid").length : rows.filter(r => (r.invoices || []).length && r.invoices.every(i => i.computed_status === "Paid")).length;
+  return (
+    <div className="content-card" style={{ marginBottom: 14 }}>
+      <div className="section-head" style={{ cursor: "pointer" }} onClick={() => setOpen(o => !o)}>
+        <h3 style={{ margin: 0 }}>{kind === "supplier" ? "📋 Supplier status" : "🏢 Customer status"} — {monthLabel}</h3>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, fontWeight: 700 }}>
+          <span>{tot} {kind === "supplier" ? "supplier(s)" : "customer(s)"}</span>
+          <span style={{ color: "#d97706" }}>Timesheet not sent: {tot - k1}</span>
+          <span style={{ color: "#dc2626" }}>{kind === "supplier" ? "Invoice not received" : "Invoice not raised"}: {tot - k2}</span>
+          <span style={{ color: "#166534" }}>Paid: {k3}</span>
+          <button className="btn-mini" onClick={e => { e.stopPropagation(); load(); }}>🔄</button>
+          <span>{open ? "▲" : "▼"}</span>
+        </div>
+      </div>
+      {err && <div style={{ padding: "8px 12px", color: "#b91c1c", fontSize: 12 }}>⚠ Could not load status: {err}</div>}
+      {open && <div className="table-scroll">
+        <table className="data-table">
+          <thead>{kind === "supplier"
+            ? <tr><th>Supplier</th><th>Customer · Site</th><th>Hrs</th><th>Deduction</th><th>Net Payable</th><th>Timesheet sent</th><th>Invoice received</th><th>Finance</th></tr>
+            : <tr><th>Customer</th><th>Site</th><th>Workers</th><th>Hrs</th><th>Timesheet sent</th><th>Invoice raised</th><th>Payment</th></tr>}</thead>
+          <tbody>
+            {!data && !err && <tr><td colSpan={8} style={{ textAlign: "center", padding: 16, color: "#64748b" }}>Loading…</td></tr>}
+            {data && !rows.length && <tr><td colSpan={8} style={{ textAlign: "center", padding: 16, color: "#64748b" }}>Nothing for {monthLabel}</td></tr>}
+            {kind === "supplier" && rows.map(r => (
+              <tr key={r.key}>
+                <td style={{ fontWeight: 700 }}>{r.supplier_name}</td>
+                <td title={r.customer_name + " — " + r.location} style={{ fontSize: 12, whiteSpace: "nowrap" }}><b>{msShort(r.customer_name)}</b> · {msShort(r.location)}</td>
+                <td>{r.hours}</td>
+                <td style={{ color: r.deduction_total ? "#dc2626" : "#94a3b8" }}>{r.deduction_total ? "− " + money(r.deduction_total) : "—"}</td>
+                <td style={{ fontWeight: 700 }}>{money(r.net_amount)}</td>
+                <td>{chip(!!r.ts_sent, r.ts_sent ? "✓ Sent" : "✗ Not sent", r.ts_sent ? fmtD(r.ts_sent.at) : "")}</td>
+                <td>{chip(!!r.invoice_received, r.invoice_received ? "✓ Received" : "✗ Not received", r.invoice_received ? [fmtD(r.invoice_received.at), r.invoice_received.invoice_no].filter(Boolean).join(" · ") : "")}</td>
+                <td style={{ fontSize: 11, whiteSpace: "nowrap" }}>{!r.finance ? <span style={{ color: "#94a3b8" }}>Not recorded</span> : r.finance.status === "Paid" ? <span style={{ color: "#166534", fontWeight: 800 }}>✓ Paid {fmtD(r.finance.paid_date)}</span> : <span style={{ color: "#d97706", fontWeight: 700 }}>{r.finance.invoice_number} · unpaid</span>}</td>
+              </tr>))}
+            {kind === "customer" && rows.map(c => {
+              const invs = c.invoices || []; const bal = invs.reduce((a, x) => a + (parseFloat(x.balance_due) || 0), 0); const allPaid = invs.length && invs.every(x => x.computed_status === "Paid");
+              return (
+                <tr key={c.customer_name + c.location}>
+                  <td title={c.customer_name} style={{ fontWeight: 700, whiteSpace: "nowrap" }}>{msShort(c.customer_name)}</td>
+                  <td title={c.location} style={{ fontSize: 12, whiteSpace: "nowrap" }}>{c.location ? msShort(c.location) : (c.from_mob ? "" : <span style={{ color: "#94a3b8" }}>(not on Mob timesheets)</span>)}</td>
+                  <td>{c.workers ?? "—"}</td>
+                  <td>{c.hours ?? "—"}</td>
+                  <td>{chip(!!c.ts_sent, c.ts_sent ? "✓ Sent" : "✗ Not sent", c.ts_sent ? fmtD(c.ts_sent.at) : "")}</td>
+                  <td style={{ fontSize: 11 }}>{invs.length ? invs.map(x => <div key={x.id} style={{ whiteSpace: "nowrap" }}><b>{x.invoice_no}</b> · {money(x.invoice_value, x.currency)}</div>) : chip(false, "✗ Not raised")}</td>
+                  <td style={{ fontSize: 11, whiteSpace: "nowrap" }}>{!invs.length ? "—" : allPaid ? <span style={{ color: "#166534", fontWeight: 800 }}>✓ Paid</span> : <span style={{ color: invs.some(x => x.computed_status === "Overdue") ? "#dc2626" : "#d97706", fontWeight: 700 }}>Balance {money(bal, invs[0].currency)} · {[...new Set(invs.map(x => x.computed_status))].join(", ")}</span>}</td>
+                </tr>);
+            })}
+          </tbody>
+        </table>
+      </div>}
+    </div>
+  );
+}
+
 // ─── SUPPLIER INVOICES ───────────────────────────────────────────────────────
 // Reads from public.supplier_invoices (created in Finance Supabase project)
 // same SUPABASE_URL / sb client used throughout this file.
@@ -2002,7 +2149,15 @@ function SupplierInvoices() {
     if (!error) setRows(data || []);
     setLoading(false);
   }
-  useEffect(() => { load(); }, []);
+  // Live: any change made in the Finance portal shows here straight away (Supabase realtime), plus a 60s refresh as a fallback
+  useEffect(() => {
+    load();
+    const ch = sb.channel("ops-supplier-invoices")
+      .on("postgres_changes", { event: "*", schema: "public", table: "supplier_invoices" }, () => load())
+      .subscribe();
+    const t = setInterval(load, 60000);
+    return () => { sb.removeChannel(ch); clearInterval(t); };
+  }, []);
 
   const filtered = (rows || []).filter(r => {
     const ms = statusFilter === "All" || r.status === statusFilter;
@@ -2058,6 +2213,8 @@ function SupplierInvoices() {
               ["Description",     row.description||"—"],
               ["Hours",           row.hours??"—"],
               ["Rate / Hr",       row.rate_per_hour ? `AED ${siFmt(row.rate_per_hour)}` : "—"],
+              ["Deduction",       parseFloat(row.deduction_amount) ? `− AED ${siFmt(row.deduction_amount)}` : "—"],
+              ["Deduction Reason", row.deduction_reason||"—"],
               ["Sub Total",       `AED ${siFmt(row.sub_total)}`],
               ["VAT Rate",        `${row.vat_rate??0}%`],
               ["VAT Amount",      `AED ${siFmt(row.vat_amount)}`],
@@ -2103,6 +2260,7 @@ function SupplierInvoices() {
   return (
     <>
       {detailRow && <DetailOverlay row={detailRow} onClose={() => setDetailRow(null)} />}
+      <MonthStatusPanel kind="supplier" />
 
       {/* KPI STRIP */}
       <div className="kpi-grid" style={{gridTemplateColumns:"repeat(5,minmax(0,1fr))"}}>
@@ -2155,6 +2313,7 @@ function SupplierInvoices() {
                 <th>Description</th>
                 <th>Hrs</th>
                 <th>Rate</th>
+                <th>Deduction</th>
                 <th>Amount (AED)</th>
                 <th>Mob Portal</th>
                 <th>Variance</th>
@@ -2169,10 +2328,10 @@ function SupplierInvoices() {
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={17} style={{textAlign:"center",padding:24,color:"#64748b"}}>Loading…</td></tr>
+                <tr><td colSpan={18} style={{textAlign:"center",padding:24,color:"#64748b"}}>Loading…</td></tr>
               )}
               {!loading && filtered.length === 0 && (
-                <tr><td colSpan={17} style={{textAlign:"center",padding:24,color:"#64748b"}}>No supplier invoices found</td></tr>
+                <tr><td colSpan={18} style={{textAlign:"center",padding:24,color:"#64748b"}}>No supplier invoices found</td></tr>
               )}
               {!loading && filtered.map(r => {
                 const days = siDaysUntil(r.satco_due_date || r.due_date);
@@ -2199,6 +2358,7 @@ function SupplierInvoices() {
                     <td style={{maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.description||"—"}</td>
                     <td>{r.hours??"—"}</td>
                     <td>{r.rate_per_hour??"—"}</td>
+                    <td style={{color:parseFloat(r.deduction_amount)?"#dc2626":"#94a3b8",fontWeight:parseFloat(r.deduction_amount)?700:400}} title={r.deduction_reason||""}>{parseFloat(r.deduction_amount)?"− "+siFmt(r.deduction_amount):"—"}</td>
                     <td style={{fontWeight:800}}>
                       AED {siFmt(r.total_amount)}
                       {r.paid_amount && r.status==="Paid" && parseFloat(r.paid_amount)!==parseFloat(r.total_amount) && 
@@ -2242,6 +2402,7 @@ function SupplierInvoices() {
 }
 
 
+
 function App() {
   const session = useAuth();
   const [view, setView] = useState("dashboard");
@@ -2253,8 +2414,8 @@ function App() {
   const titles = {
     dashboard: ["Dashboard", "Overview of open POs, unpaid invoices, and outstanding balance"],
     pos: ["Purchase Orders", "Upload POs and let AI pull the fields for review"],
-    invoices: ["Invoices", "Raise invoices against POs with auto-generated numbers"],
-    supplier_invoices: ["Supplier Invoices", "Capture, validate, and track payments to suppliers — AI scan, mob portal check, 30/45-day terms"],
+    invoices: ["Customer Invoices", "Raise customer invoices — against a PO, or customer-only when there is no PO"],
+    supplier_invoices: ["Supplier Invoices", "Supplier invoices recorded in the Finance portal — view only, updates live"],
     pettycash: ["Petty Cash", "Track small day-to-day office expenses"],
     statements: ["Statements of Account", "Per-client balance, aging, and export"],
   };
