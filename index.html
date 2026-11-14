@@ -2044,6 +2044,7 @@ function MonthStatusPanel({ kind }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [open, setOpen] = useState(true);
+  const [showDone, setShowDone] = useState(false);
   async function load() {
     setErr("");
     try {
@@ -2059,20 +2060,26 @@ function MonthStatusPanel({ kind }) {
   const money = (v, c) => (c || "AED") + " " + Number(v || 0).toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const chip = (ok, label, sub) => <span style={{ padding: "3px 9px", borderRadius: 999, fontSize: 11, fontWeight: 800, whiteSpace: "nowrap", border: "1px solid " + (ok ? "#86efac" : "#fecaca"), background: ok ? "#dcfce7" : "#fef2f2", color: ok ? "#166534" : "#b91c1c" }}>{label}{sub ? <span style={{ fontWeight: 600, marginLeft: 4, opacity: .8 }}>{sub}</span> : null}</span>;
   const monthLabel = data ? new Date(data.month + "-01T00:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" }) : "previous month";
-  const rows = data ? (kind === "supplier" ? data.suppliers : data.customers) : [];
-  const tot = rows.length;
-  const k1 = kind === "supplier" ? rows.filter(r => r.ts_sent).length : rows.filter(r => r.ts_sent).length;
-  const k2 = kind === "supplier" ? rows.filter(r => r.invoice_received).length : rows.filter(r => (r.invoices || []).length).length;
-  const k3 = kind === "supplier" ? rows.filter(r => r.finance && r.finance.status === "Paid").length : rows.filter(r => (r.invoices || []).length && r.invoices.every(i => i.computed_status === "Paid")).length;
+  const allRows = data ? (kind === "supplier" ? data.suppliers : data.customers) : [];
+  // Only what is still pending is listed — once the invoice is received/recorded (supplier) or raised (customer)
+  // it lives in the table below. "Show completed" brings the finished ones back.
+  const isDone = r => kind === "supplier" ? !!(r.finance || r.invoice_received) : (r.invoices || []).length > 0;
+  const doneCount = allRows.filter(isDone).length;
+  const rows = showDone ? allRows : allRows.filter(r => !isDone(r));
+  const tot = allRows.length;
+  const k1 = kind === "supplier" ? allRows.filter(r => r.ts_sent).length : allRows.filter(r => r.ts_sent).length;
+  const k2 = kind === "supplier" ? allRows.filter(r => r.invoice_received).length : allRows.filter(r => (r.invoices || []).length).length;
+  const k3 = kind === "supplier" ? allRows.filter(r => r.finance && r.finance.status === "Paid").length : allRows.filter(r => (r.invoices || []).length && r.invoices.every(i => i.computed_status === "Paid")).length;
   return (
     <div className="content-card" style={{ marginBottom: 14 }}>
       <div className="section-head" style={{ cursor: "pointer" }} onClick={() => setOpen(o => !o)}>
-        <h3 style={{ margin: 0 }}>{kind === "supplier" ? "📋 Supplier status" : "🏢 Customer status"} — {monthLabel}</h3>
+        <h3 style={{ margin: 0 }}>{kind === "supplier" ? "📋 Supplier invoices pending" : "🏢 Customer invoices pending"} — {monthLabel}</h3>
         <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, fontWeight: 700 }}>
           <span>{tot} {kind === "supplier" ? "supplier(s)" : "customer(s)"}</span>
           <span style={{ color: "#d97706" }}>Timesheet not sent: {tot - k1}</span>
           <span style={{ color: "#dc2626" }}>{kind === "supplier" ? "Invoice not received" : "Invoice not raised"}: {tot - k2}</span>
           <span style={{ color: "#166534" }}>Paid: {k3}</span>
+          {doneCount > 0 && <button className="btn-mini" onClick={e => { e.stopPropagation(); setShowDone(v => !v); }}>{showDone ? "Hide completed" : "Show completed (" + doneCount + ")"}</button>}
           <button className="btn-mini" onClick={e => { e.stopPropagation(); load(); }}>🔄</button>
           <span>{open ? "▲" : "▼"}</span>
         </div>
@@ -2085,7 +2092,7 @@ function MonthStatusPanel({ kind }) {
             : <tr><th>Customer</th><th>Site</th><th>Workers</th><th>Hrs</th><th>Timesheet sent</th><th>Invoice raised</th><th>Payment</th></tr>}</thead>
           <tbody>
             {!data && !err && <tr><td colSpan={8} style={{ textAlign: "center", padding: 16, color: "#64748b" }}>Loading…</td></tr>}
-            {data && !rows.length && <tr><td colSpan={8} style={{ textAlign: "center", padding: 16, color: "#64748b" }}>Nothing for {monthLabel}</td></tr>}
+            {data && !rows.length && <tr><td colSpan={8} style={{ textAlign: "center", padding: 16, color: "#4ade80", fontWeight: 700 }}>{allRows.length ? (kind === "supplier" ? "✓ All supplier invoices for " + monthLabel + " received — see the table below" : "✓ All customer invoices for " + monthLabel + " raised — see the table below") : "Nothing for " + monthLabel}</td></tr>}
             {kind === "supplier" && rows.map(r => (
               <tr key={r.key}>
                 <td style={{ fontWeight: 700 }}>{r.supplier_name}</td>
