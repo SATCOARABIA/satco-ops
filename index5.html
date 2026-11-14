@@ -1861,6 +1861,7 @@ function Statements() {
 
 // ─── PREVIOUS-MONTH STATUS (read-only) ───────────────────────────────────────
 // Same data as the Mobilisation portal's Supplier / Customer Status tabs (satco-finance /api/month-status).
+const msShort = t => String(t || "").replace(/[,\-–]/g, " ").split(/\s+/).filter(Boolean).slice(0, 2).join(" ");
 function MonthStatusPanel({ kind }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
@@ -1902,7 +1903,7 @@ function MonthStatusPanel({ kind }) {
       {open && <div className="table-scroll">
         <table className="data-table">
           <thead>{kind === "supplier"
-            ? <tr><th>Supplier</th><th>Customer / Site</th><th>Hrs</th><th>Deduction</th><th>Net Payable</th><th>Timesheet sent</th><th>Invoice received</th><th>Finance</th></tr>
+            ? <tr><th>Supplier</th><th>Customer · Site</th><th>Hrs</th><th>Deduction</th><th>Net Payable</th><th>Timesheet sent</th><th>Invoice received</th><th>Finance</th></tr>
             : <tr><th>Customer</th><th>Site</th><th>Workers</th><th>Hrs</th><th>Timesheet sent</th><th>Invoice raised</th><th>Payment</th></tr>}</thead>
           <tbody>
             {!data && !err && <tr><td colSpan={8} style={{ textAlign: "center", padding: 16, color: "#64748b" }}>Loading…</td></tr>}
@@ -1910,7 +1911,7 @@ function MonthStatusPanel({ kind }) {
             {kind === "supplier" && rows.map(r => (
               <tr key={r.key}>
                 <td style={{ fontWeight: 700 }}>{r.supplier_name}</td>
-                <td style={{ fontSize: 11 }}>{r.customer_name}<div style={{ color: "#94a3b8" }}>{r.location}</div></td>
+                <td title={r.customer_name + " — " + r.location} style={{ fontSize: 12, whiteSpace: "nowrap" }}><b>{msShort(r.customer_name)}</b> · {msShort(r.location)}</td>
                 <td>{r.hours}</td>
                 <td style={{ color: r.deduction_total ? "#dc2626" : "#94a3b8" }}>{r.deduction_total ? "− " + money(r.deduction_total) : "—"}</td>
                 <td style={{ fontWeight: 700 }}>{money(r.net_amount)}</td>
@@ -1922,8 +1923,8 @@ function MonthStatusPanel({ kind }) {
               const invs = c.invoices || []; const bal = invs.reduce((a, x) => a + (parseFloat(x.balance_due) || 0), 0); const allPaid = invs.length && invs.every(x => x.computed_status === "Paid");
               return (
                 <tr key={c.customer_name + c.location}>
-                  <td style={{ fontWeight: 700 }}>{c.customer_name}</td>
-                  <td style={{ fontSize: 11 }}>{c.location || (c.from_mob ? "" : <span style={{ color: "#94a3b8" }}>(not on Mob timesheets)</span>)}</td>
+                  <td title={c.customer_name} style={{ fontWeight: 700, whiteSpace: "nowrap" }}>{msShort(c.customer_name)}</td>
+                  <td title={c.location} style={{ fontSize: 12, whiteSpace: "nowrap" }}>{c.location ? msShort(c.location) : (c.from_mob ? "" : <span style={{ color: "#94a3b8" }}>(not on Mob timesheets)</span>)}</td>
                   <td>{c.workers ?? "—"}</td>
                   <td>{c.hours ?? "—"}</td>
                   <td>{chip(!!c.ts_sent, c.ts_sent ? "✓ Sent" : "✗ Not sent", c.ts_sent ? fmtD(c.ts_sent.at) : "")}</td>
