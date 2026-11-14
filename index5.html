@@ -410,7 +410,7 @@ function Sidebar({ view, setView, mobileOpen, onCloseMobile }) {
   const items = [
     { id: "dashboard", label: "Dashboard" },
     { id: "pos", label: "Purchase Orders" },
-    { id: "invoices", label: "Invoices" },
+    { id: "invoices", label: "Customer Invoices" },
     { id: "supplier_invoices", label: "Supplier Invoices" },
     { id: "pettycash", label: "Petty Cash" },
     { id: "statements", label: "Statements of Account" },
@@ -737,7 +737,11 @@ function PurchaseOrders() {
 }
 
 function EditInvoiceRow({ inv, colSpan, onCancel, onSaved }) {
+  const [custList, setCustList] = useState([]);
+  useEffect(() => { if (!inv.po_id) ops().from("customers").select("id, name").order("name").then(({ data }) => setCustList(data || [])); }, []);
   const [form, setForm] = useState({
+    customer_id: inv.customer_id || "",
+    new_customer: "",
     invoice_no: inv.invoice_no || "",
     invoice_date: inv.invoice_date || "",
     currency: inv.currency || "AED",
@@ -755,7 +759,20 @@ function EditInvoiceRow({ inv, colSpan, onCancel, onSaved }) {
     setErr(null);
     const invoiceNo = (form.invoice_no || "").trim();
     if (!invoiceNo) { setErr("Invoice No. is required."); setSaving(false); return; }
+    let customerPatch = {};
+    if (!inv.po_id) {
+      let cid = form.customer_id;
+      if (cid === "__new") {
+        const name = (form.new_customer || "").trim();
+        if (!name) { setErr("Enter the new customer's name."); setSaving(false); return; }
+        const ex = custList.find(c => c.name.trim().toLowerCase() === name.toLowerCase());
+        if (ex) cid = ex.id;
+        else { const { data: nc, error: cErr } = await ops().from("customers").insert({ name, payment_terms_days: 30 }).select("id").single(); if (cErr) { setErr(cErr.message); setSaving(false); return; } cid = nc.id; }
+      }
+      customerPatch = { customer_id: cid || null };
+    }
     const payload = {
+      ...customerPatch,
       invoice_no: invoiceNo,
       invoice_date: form.invoice_date,
       currency: form.currency,
@@ -779,6 +796,15 @@ function EditInvoiceRow({ inv, colSpan, onCancel, onSaved }) {
       <td colSpan={colSpan}>
         {err && <div className="alert-card">{err}</div>}
         <div className="form-grid">
+          {!inv.po_id && <div className="field">
+            <label>Customer (no PO)</label>
+            <select value={form.customer_id} onChange={(e)=>setForm({...form, customer_id:e.target.value})}>
+              <option value="">— Select customer —</option>
+              {custList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              <option value="__new">＋ New customer…</option>
+            </select>
+          </div>}
+          {!inv.po_id && form.customer_id === "__new" && <div className="field"><label>New Customer Name</label><input value={form.new_customer} onChange={(e)=>setForm({...form, new_customer:e.target.value})} /></div>}
           <div className="field"><label>Invoice No.</label><input value={form.invoice_no} onChange={(e)=>setForm({...form, invoice_no:e.target.value})} /></div>
           <div className="field"><label>Invoice Date</label><input type="date" value={form.invoice_date} onChange={(e)=>setForm({...form, invoice_date:e.target.value})} /></div>
           <div className="field"><label>Invoice Period - From</label><input type="date" value={form.period_from} onChange={(e)=>setForm({...form, period_from:e.target.value})} /></div>
@@ -973,14 +999,20 @@ function Invoices() {
   const [payingId, setPayingId] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
   const [search, setSearch] = useState("");
+  const [customers, setCustomers] = useState([]);
+  const [poSel, setPoSel] = useState("");          // PO id, or "__nopo" for a customer without a PO
+  const [custSel, setCustSel] = useState("");      // customer id, or "__new"
+  const [newCust, setNewCust] = useState("");
 
   async function load() {
-    const [{ data: inv }, { data: p }] = await Promise.all([
+    const [{ data: inv }, { data: p }, { data: c }] = await Promise.all([
       ops().from("invoice_summary").select("*").order("invoice_date", { ascending: false }),
       ops().from("purchase_orders").select("id, po_no, po_value, payment_terms_days, customer_id, customers(name)").neq("status", "closed"),
+      ops().from("customers").select("id, name, payment_terms_days").order("name"),
     ]);
     setInvoices(inv || []);
     setOpenPos(p || []);
+    setCustomers(c || []);
   }
   useEffect(() => { load(); }, []);
 
@@ -1014,8 +1046,28 @@ function Invoices() {
       const periodFrom = f.get("period_from") || null;
       const periodTo = f.get("period_to") || null;
       const invoiceNoOverride = (f.get("invoice_no") || "").trim();
-      const po = openPos.find((p) => p.id === poId);
-      if (!po) throw new Error("Select a valid PO");
+      const noPo = poId === "__nopo";
+      const po = noPo ? null : openPos.find((p) => p.id === poId);
+      if (!noPo && !po) throw new Error("Select a PO, or choose “No PO — customer only”");
+      // Customer without a PO: pick an existing customer or add a new one
+      let customerId = po ? po.customer_id : null, terms = po ? (po.payment_terms_days || 30) : 30;
+      if (noPo) {
+        if (custSel === "__new") {
+          const name = newCust.trim();
+          if (!name) throw new Error("Enter the new customer's name");
+          const existing = customers.find(c => c.name.trim().toLowerCase() === name.toLowerCase());
+          if (existing) { customerId = existing.id; terms = existing.payment_terms_days || 30; }
+          else {
+            const { data: nc, error: cErr } = await ops().from("customers").insert({ name, payment_terms_days: 30 }).select("id").single();
+            if (cErr) throw cErr;
+            customerId = nc.id;
+          }
+        } else {
+          const c = customers.find(c => c.id === custSel);
+          if (!c) throw new Error("Select the customer");
+          customerId = c.id; terms = c.payment_terms_days || 30;
+        }
+      }
 
       let invoiceNo = invoiceNoOverride;
       if (!invoiceNo) {
@@ -1036,18 +1088,19 @@ function Invoices() {
       const { error: insErr } = await ops().from("invoices").insert({
         invoice_no: invoiceNo,
         invoice_date: invoiceDate,
-        po_id: po.id,
-        customer_id: po.customer_id,
+        po_id: po ? po.id : null,
+        customer_id: customerId,
         invoice_value: invoiceValue,
         currency,
         period_from: periodFrom,
         period_to: periodTo,
-        payment_terms_days: po.payment_terms_days || 30,
+        payment_terms_days: terms,
         status: "draft",
         source_file_url: sourceFileUrl,
       });
       if (insErr) throw insErr;
       e.target.reset();
+      setPoSel(""); setCustSel(""); setNewCust("");
       load();
     } catch (err) {
       setError(err.message || "Failed to create invoice");
@@ -1067,17 +1120,30 @@ function Invoices() {
     <div>
       <MonthStatusPanel kind="customer" />
       <div className="content-card">
-        <h3>Raise a new invoice against a PO</h3>
+        <h3>Raise a new customer invoice</h3>
         <form onSubmit={handleSubmit} className="form-grid">
           <div className="field">
             <label>Purchase Order</label>
-            <select name="po_id" required>
+            <select name="po_id" required value={poSel} onChange={e => setPoSel(e.target.value)}>
               <option value="">Select PO…</option>
+              <option value="__nopo">— No PO (customer only) —</option>
               {openPos.map((po) => (
                 <option key={po.id} value={po.id}>{po.po_no} — {po.customers?.name || "Unknown"} ({fmt(po.po_value)})</option>
               ))}
             </select>
           </div>
+          {poSel === "__nopo" && <div className="field">
+            <label>Customer</label>
+            <select required value={custSel} onChange={e => setCustSel(e.target.value)}>
+              <option value="">Select customer…</option>
+              {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              <option value="__new">＋ New customer…</option>
+            </select>
+          </div>}
+          {poSel === "__nopo" && custSel === "__new" && <div className="field">
+            <label>New Customer Name</label>
+            <input required value={newCust} onChange={e => setNewCust(e.target.value)} placeholder="e.g. PSN" />
+          </div>}
           <div className="field"><label>Invoice Date</label><input type="date" name="invoice_date" required /></div>
           <div className="field"><label>Invoice Period - From</label><input type="date" name="period_from" /></div>
           <div className="field"><label>Invoice Period - To</label><input type="date" name="period_to" /></div>
@@ -1100,7 +1166,7 @@ function Invoices() {
 
       <div className="content-card">
         <div className="section-head">
-          <h3>Invoices</h3>
+          <h3>Customer Invoices</h3>
           <input type="text" className="search-input" value={search} onChange={(e)=>setSearch(e.target.value)} placeholder="Search invoice no., PO, customer, status…" />
         </div>
         <div className="table-scroll">
@@ -1114,7 +1180,7 @@ function Invoices() {
                 <ManagePaymentsRow key={inv.id} inv={inv} colSpan={15} onClose={() => setPayingId(null)} onChanged={() => load()} />
               ) : (
                 <tr key={inv.id} className={inv.computed_status === "Paid" ? "row-paid" : ""}>
-                  <td>{inv.invoice_no}</td><td>{inv.invoice_date}</td><td>{inv.po_no}</td><td>{inv.customer_name}</td>
+                  <td>{inv.invoice_no}</td><td>{inv.invoice_date}</td><td>{inv.po_no || <span style={{color:"#94a3b8"}}>No PO</span>}</td><td>{inv.customer_name || <span style={{color:"#dc2626",fontWeight:700}}>⚠ No customer — Edit</span>}</td>
                   <td>{inv.period_from || "—"}</td><td>{inv.period_to || "—"}</td>
                   <td>{inv.currency || "AED"}</td><td>{fmt(inv.invoice_value)}</td><td>{fmt(inv.amount_paid)}</td><td>{fmt(inv.balance_due)}</td>
                   <td>{inv.due_date}</td>
@@ -2236,7 +2302,7 @@ function App() {
   const titles = {
     dashboard: ["Dashboard", "Overview of open POs, unpaid invoices, and outstanding balance"],
     pos: ["Purchase Orders", "Upload POs and let AI pull the fields for review"],
-    invoices: ["Invoices", "Raise invoices against POs with auto-generated numbers"],
+    invoices: ["Customer Invoices", "Raise customer invoices — against a PO, or customer-only when there is no PO"],
     supplier_invoices: ["Supplier Invoices", "Supplier invoices recorded in the Finance portal — view only, updates live"],
     pettycash: ["Petty Cash", "Track small day-to-day office expenses"],
     statements: ["Statements of Account", "Per-client balance, aging, and export"],
