@@ -975,6 +975,132 @@ function ManagePaymentsRow({ inv, colSpan, onClose, onChanged }) {
   );
 }
 
+// ── PROFORMA INVOICES (read-only, shown inside Customer Invoices) ──────────────
+// Raised and managed in the Finance portal (public.client_proforma_invoices / _lines).
+// Ops lists them alongside tax invoices with a PROFORMA tag; they are NOT receivables, so they are
+// excluded from balances, aging, the dashboard and statements. Live via Supabase realtime.
+const PFO_STATUS = {
+  draft:     { label:"Draft",     background:"#f1f5f9", color:"#475569" },
+  sent:      { label:"Sent",      background:"#dbeafe", color:"#1e40af" },
+  received:  { label:"Received",  background:"#dcfce7", color:"#166534" },
+  cancelled: { label:"Cancelled", background:"#fee2e2", color:"#991b1b" },
+};
+function pfoLine(l) {
+  const qty = l.qty === "" || l.qty == null ? 1 : Number(l.qty) || 0;
+  const rate = Number(l.unit_rate) || 0, discount = Number(l.discount) || 0;
+  const vatPct = l.vat_pct === "" || l.vat_pct == null ? 5 : Number(l.vat_pct);
+  const taxable = qty * rate - discount, vatAmt = Math.round(taxable * vatPct) / 100;
+  return { qty, rate, discount, vatPct, taxable, vatAmt, incl: taxable + vatAmt };
+}
+function pfoTotals(lines) {
+  return (lines || []).reduce((s, l) => { const c = pfoLine(l); s.taxable += c.taxable; s.vatAmt += c.vatAmt; s.incl += c.incl; return s; }, { taxable:0, vatAmt:0, incl:0 });
+}
+function PfoBadge({ status }) {
+  const s = PFO_STATUS[status] || { label: status || "—", background:"#f1f5f9", color:"#334155" };
+  return <span style={{ padding:"2px 9px", borderRadius:999, fontSize:11, fontWeight:800, background:s.background, color:s.color }}>{s.label}</span>;
+}
+const PFO_TAG = <span style={{ marginLeft:6, padding:"1px 7px", borderRadius:6, fontSize:10, fontWeight:900, letterSpacing:".05em", background:"#fef3c7", color:"#92400e", border:"1px solid #fcd34d" }}>PROFORMA</span>;
+
+function useProformaData() {
+  const [rows, setRows] = useState([]);
+  const [linesMap, setLinesMap] = useState({});
+  const [recoveries, setRecoveries] = useState([]);
+  async function load() {
+    const [pf, pl, ci] = await Promise.all([
+      sb.from("client_proforma_invoices").select("*").order("proforma_date", { ascending: false }),
+      sb.from("client_proforma_lines").select("*").order("sort_order", { ascending: true }),
+      sb.from("client_invoices").select("id,invoice_number,invoice_date,advance_proforma_id,advance_recovery_pct,advance_recovery_amount").not("advance_proforma_id", "is", null),
+    ]);
+    if (!pf.error) setRows(pf.data || []);
+    const m = {}; (pl.data || []).forEach(l => { (m[l.proforma_id] = m[l.proforma_id] || []).push(l); });
+    setLinesMap(m);
+    setRecoveries(ci.data || []);
+  }
+  useEffect(() => {
+    load();
+    const ch = sb.channel("ops-proforma-invoices")
+      .on("postgres_changes", { event: "*", schema: "public", table: "client_proforma_invoices" }, () => load())
+      .on("postgres_changes", { event: "*", schema: "public", table: "client_proforma_lines" }, () => load())
+      .on("postgres_changes", { event: "*", schema: "public", table: "client_invoices" }, () => load())
+      .subscribe();
+    const t = setInterval(load, 60000);
+    return () => { sb.removeChannel(ch); clearInterval(t); };
+  }, []);
+  // Advance recovery per received advance proforma (amount excl. VAT, recovered on tax invoices, balance)
+  const ledger = React.useMemo(() => {
+    const out = {};
+    rows.filter(p => p.proforma_type === "advance" && p.status === "received").forEach(p => {
+      const amount = pfoTotals(linesMap[p.id]).taxable;
+      const invs = recoveries.filter(i => i.advance_proforma_id === p.id && Number(i.advance_recovery_amount) > 0);
+      const recovered = invs.reduce((s, i) => s + Number(i.advance_recovery_amount || 0), 0);
+      out[p.id] = { amount, recovered, balance: Math.max(0, Math.round((amount - recovered) * 100) / 100), invoices: invs };
+    });
+    return out;
+  }, [rows, linesMap, recoveries]);
+  return { proformas: rows, pfLines: linesMap, pfLedger: ledger, reloadProformas: load };
+}
+
+function ProformaDetail({ p, lines, led, onClose }) {
+  const t = pfoTotals(lines);
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,.6)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20,backdropFilter:"blur(3px)"}}
+         onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{background:"#fff",borderRadius:20,boxShadow:"0 20px 60px rgba(15,23,42,.2)",width:"100%",maxWidth:760,maxHeight:"88vh",overflowY:"auto",borderTop:"4px solid #c8a84b"}}>
+        <div style={{padding:"16px 22px 12px",borderBottom:"1px solid #e2e8f0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontWeight:900,fontSize:15,color:"#0f172a"}}>📄 Proforma Invoice {p.proforma_number || ""} <PfoBadge status={p.status} /></div>
+          <button onClick={onClose} style={{width:30,height:30,borderRadius:"50%",border:"none",background:"#f1f5f9",cursor:"pointer",fontSize:16}}>×</button>
+        </div>
+        <div style={{padding:"18px 22px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:"10px 24px",fontSize:13}}>
+          {[
+            ["Client", p.client_name || "—"],
+            ["Date", siFmtDate(p.proforma_date)],
+            ["Type", p.proforma_type === "advance" ? `Advance ${p.advance_pct ?? "—"}% · recover ${p.recovery_pct ?? "—"}% per invoice` : "General"],
+            ["PO Reference", p.po_reference || "—"],
+            ["PO Value", p.po_value ? siFmtAed(p.po_value) : "—"],
+            ["Project / Location", p.project_location || "—"],
+            ["Subject", p.subject_line || "—"],
+            ["Payment Terms", p.payment_terms || "—"],
+            ["Validity", p.validity || "—"],
+            ["Received", p.received_date ? `${siFmtAed(p.received_amount_aed)} on ${siFmtDate(p.received_date)}` : "—"],
+            ["Converted to", p.converted_invoice_number ? `Tax Invoice ${p.converted_invoice_number}` : "Not yet converted"],
+            ["Remarks", p.remarks || "—"],
+          ].map(([label, val]) => (
+            <div key={label} style={{display:"flex",flexDirection:"column",gap:2}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:".04em"}}>{label}</div>
+              <div style={{fontWeight:600,color:"#0f172a"}}>{val}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{padding:"0 22px 16px"}}>
+          <div className="table-scroll">
+            <table className="data-table">
+              <thead><tr><th>Description</th><th>Qty</th><th>Unit</th><th>Rate</th><th>Discount</th><th>VAT %</th><th>Taxable</th><th>Total (Incl. VAT)</th></tr></thead>
+              <tbody>
+                {(lines || []).length === 0 && <tr><td colSpan={8} style={{textAlign:"center",color:"#64748b"}}>No lines</td></tr>}
+                {(lines || []).map(l => { const c = pfoLine(l); return (
+                  <tr key={l.id}><td>{l.description}</td><td>{c.qty}</td><td>{l.unit || ""}</td><td>{siFmt(c.rate)}</td><td>{c.discount ? siFmt(c.discount) : "—"}</td><td>{c.vatPct}%</td><td>{siFmt(c.taxable)}</td><td>{siFmt(c.incl)}</td></tr>
+                ); })}
+                <tr style={{fontWeight:800}}><td colSpan={6} style={{textAlign:"right"}}>Totals (AED) — VAT {siFmt(t.vatAmt)}</td><td>{siFmt(t.taxable)}</td><td>{siFmt(t.incl)}</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        {led && (
+          <div style={{padding:"0 22px 18px",fontSize:13}}>
+            <div style={{fontWeight:800,marginBottom:6}}>Advance recovery</div>
+            <div style={{marginBottom:6}}>Advance {siFmtAed(led.amount)} · Recovered {siFmtAed(led.recovered)} · <strong>Balance {siFmtAed(led.balance)}</strong> (excl. VAT)</div>
+            {led.invoices.length === 0 ? <div style={{color:"#64748b"}}>Not yet recovered on any tax invoice.</div> :
+              led.invoices.map(i => <div key={i.id} style={{color:"#334155"}}>• {i.invoice_number} ({siFmtDate(i.invoice_date)}) — {i.advance_recovery_pct ?? "—"}% = {siFmtAed(i.advance_recovery_amount)}</div>)}
+          </div>
+        )}
+        <div style={{padding:"12px 22px",borderTop:"1px solid #e2e8f0",background:"#f8fafc",borderRadius:"0 0 20px 20px",fontSize:12,color:"#94a3b8",textAlign:"center"}}>
+          Read-only — raise and edit proformas in the Finance Portal · not counted in balances or statements
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Invoices() {
   const [invoices, setInvoices] = useState([]);
   const [openPos, setOpenPos] = useState([]);
@@ -988,6 +1114,9 @@ function Invoices() {
   const [poSel, setPoSel] = useState("");          // PO id, or "__nopo" for a customer without a PO
   const [custSel, setCustSel] = useState("");      // customer id, or "__new"
   const [newCust, setNewCust] = useState("");
+  const [typeFilter, setTypeFilter] = useState("all");   // all | tax | proforma
+  const [pfDetail, setPfDetail] = useState(null);
+  const { proformas, pfLines, pfLedger } = useProformaData();
 
   async function load() {
     const [{ data: inv }, { data: p }, { data: c }] = await Promise.all([
@@ -1094,15 +1223,26 @@ function Invoices() {
     }
   }
 
-  const visibleInvoices = invoices.filter((inv) => {
-    const q = search.trim().toLowerCase();
+  const q = search.trim().toLowerCase();
+  const visibleInvoices = typeFilter === "proforma" ? [] : invoices.filter((inv) => {
     if (!q) return true;
     return [inv.invoice_no, inv.po_no, inv.customer_name, inv.currency, inv.computed_status, inv.due_date, inv.paid_date]
       .some((v) => (v || "").toString().toLowerCase().includes(q));
   });
+  const visibleProformas = typeFilter === "tax" ? [] : proformas.filter((p) => {
+    if (!q) return true;
+    return ["proforma", p.proforma_number, p.po_reference, p.client_name, p.status, p.proforma_date]
+      .some((v) => (v || "").toString().toLowerCase().includes(q));
+  });
+  // One list, newest first: tax invoices and proformas side by side
+  const listRows = [
+    ...visibleInvoices.map((inv) => ({ kind: "tax", date: inv.invoice_date || "", inv })),
+    ...visibleProformas.map((p) => ({ kind: "pf", date: p.proforma_date || "", p })),
+  ].sort((x, y) => (y.date || "").localeCompare(x.date || ""));
 
   return (
     <div>
+      {pfDetail && <ProformaDetail p={pfDetail} lines={pfLines[pfDetail.id]} led={pfLedger[pfDetail.id]} onClose={() => setPfDetail(null)} />}
       <MonthStatusPanel kind="customer" />
       <div className="content-card">
         <h3>Raise a new customer invoice</h3>
@@ -1152,13 +1292,34 @@ function Invoices() {
       <div className="content-card">
         <div className="section-head">
           <h3>Customer Invoices</h3>
-          <input type="text" className="search-input" value={search} onChange={(e)=>setSearch(e.target.value)} placeholder="Search invoice no., PO, customer, status…" />
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+            <select className="btn-secondary" value={typeFilter} onChange={(e)=>setTypeFilter(e.target.value)} style={{padding:"7px 12px",borderRadius:10,fontSize:13}}>
+              <option value="all">All (Tax + Proforma)</option>
+              <option value="tax">Tax invoices only</option>
+              <option value="proforma">Proforma invoices only</option>
+            </select>
+            <input type="text" className="search-input" value={search} onChange={(e)=>setSearch(e.target.value)} placeholder="Search invoice no., PO, customer, status…" />
+          </div>
         </div>
         <div className="table-scroll">
         <table className="data-table">
           <thead><tr><th>Invoice No.</th><th>Date</th><th>PO</th><th>Customer</th><th>Period From</th><th>Period To</th><th>Currency</th><th>Value</th><th>Paid</th><th>Balance</th><th>Due Date</th><th>Paid Date</th><th>Days Delayed</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>
-            {visibleInvoices.map((inv) => (
+            {listRows.map((r) => r.kind === "pf" ? (() => {
+              const p = r.p, t = pfoTotals(pfLines[p.id]), led = pfLedger[p.id];
+              return (
+                <tr key={"pf-" + p.id} style={{background:"#fffbeb", ...(p.status === "cancelled" || p.converted_invoice_number ? {opacity:.6} : {})}}>
+                  <td style={{whiteSpace:"nowrap"}}>{p.proforma_number}{PFO_TAG}</td><td>{p.proforma_date}</td><td>{p.po_reference || <span style={{color:"#94a3b8"}}>No PO</span>}</td><td>{p.client_name}</td>
+                  <td colSpan={2} style={{fontSize:12,color:"#64748b"}}>{p.proforma_type === "advance" ? `Advance ${p.advance_pct ?? "—"}% · recover ${p.recovery_pct ?? "—"}%` : "General proforma"}</td>
+                  <td>AED</td><td>{fmt(t.incl)}</td>
+                  <td>{p.received_date ? fmt(p.received_amount_aed) : "—"}</td>
+                  <td style={{fontSize:12}}>{led ? <span title="Advance balance still to recover on tax invoices (excl. VAT)">Adv. bal {fmt(led.balance)}</span> : "—"}</td>
+                  <td>—</td><td>{p.received_date || "—"}</td><td>—</td>
+                  <td><PfoBadge status={p.status} />{p.converted_invoice_number && <div style={{marginTop:4,fontSize:11,fontWeight:800,color:"#166534",whiteSpace:"nowrap"}}>✔ Tax Inv {p.converted_invoice_number}</div>}</td>
+                  <td><button className="btn-mini" onClick={() => setPfDetail(p)}>View</button></td>
+                </tr>
+              );
+            })() : (() => { const inv = r.inv; return (
               editingId === inv.id ? (
                 <EditInvoiceRow key={inv.id} inv={inv} colSpan={15} onCancel={() => setEditingId(null)} onSaved={() => { setEditingId(null); load(); }} />
               ) : payingId === inv.id ? (
@@ -1182,8 +1343,8 @@ function Invoices() {
                   </td>
                 </tr>
               )
-            ))}
-            {visibleInvoices.length === 0 && <tr className="empty-row"><td colSpan="15">{invoices.length === 0 ? "No invoices yet." : "No invoices match your search."}</td></tr>}
+            ); })())}
+            {listRows.length === 0 && <tr className="empty-row"><td colSpan="15">{invoices.length + proformas.length === 0 ? "No invoices yet." : "No invoices match your search."}</td></tr>}
           </tbody>
         </table>
         </div>
@@ -2421,7 +2582,7 @@ function App() {
   const titles = {
     dashboard: ["Dashboard", "Overview of open POs, unpaid invoices, and outstanding balance"],
     pos: ["Purchase Orders", "Upload POs and let AI pull the fields for review"],
-    invoices: ["Customer Invoices", "Raise customer invoices — against a PO, or customer-only when there is no PO"],
+    invoices: ["Customer Invoices", "Raise customer invoices — against a PO, or customer-only when there is no PO. Proformas from Finance show here tagged PROFORMA (view only)"],
     supplier_invoices: ["Supplier Invoices", "Supplier invoices recorded in the Finance portal — view only, updates live"],
     pettycash: ["Petty Cash", "Track small day-to-day office expenses"],
     statements: ["Statements of Account", "Per-client balance, aging, and export"],
