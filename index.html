@@ -8,7 +8,7 @@
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.7/babel.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.108.2"></script>
-  <script src="./mfa-guard.js?v=20261118e" data-microsoft="on" data-url="https://mbwsfwebbrzurpozyxks.supabase.co" data-key="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1id3Nmd2ViYnJ6dXJwb3p5eGtzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEyODA0MzMsImV4cCI6MjA5Njg1NjQzM30.K2GhBkRnCCjwSv0n42fL-92k1HwXvmDnMszpFo4C8aY"></script>
+  <script src="./mfa-guard.js?v=20261118f" data-microsoft="on" data-url="https://mbwsfwebbrzurpozyxks.supabase.co" data-key="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1id3Nmd2ViYnJ6dXJwb3p5eGtzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEyODA0MzMsImV4cCI6MjA5Njg1NjQzM30.K2GhBkRnCCjwSv0n42fL-92k1HwXvmDnMszpFo4C8aY"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
@@ -402,7 +402,7 @@ function LoginScreen() {
               {loading ? "Signing in…" : "Sign in"}
             </button>
           </form>
-          <a className="login-hub-link" href="https://satco-hub.vercel.app">← Back to SATCO Hub</a>
+          <a className="login-hub-link" href="https://hub.satcoarabiaengg.com">← Back to SATCO Hub</a>
         </div>
       </div>
     </div>
@@ -2211,7 +2211,7 @@ function MonthStatusPanel({ kind }) {
     setErr("");
     try {
       const { data: { session } } = await sb.auth.getSession();
-      const res = await fetch("https://satco-finance.vercel.app/api/month-status", { headers: { Authorization: "Bearer " + (session ? session.access_token : "") } });
+      const res = await fetch("https://finance.satcoarabiaengg.com/api/month-status", { headers: { Authorization: "Bearer " + (session ? session.access_token : "") } });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j.error || ("HTTP " + res.status));
       setData(j);
@@ -2604,7 +2604,7 @@ function App() {
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <span className="pill">{session.user.email}</span>
-            <a className="hub-link" href="https://satco-hub.vercel.app" title="Back to SATCO Hub">⌂ Hub</a>
+            <a className="hub-link" href="https://hub.satcoarabiaengg.com" title="Back to SATCO Hub">⌂ Hub</a>
             <button className="signout-btn" onClick={() => sb.auth.signOut()}>Sign out</button>
           </div>
         </div>
