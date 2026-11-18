@@ -411,6 +411,7 @@ function Sidebar({ view, setView, mobileOpen, onCloseMobile }) {
     { id: "dashboard", label: "Dashboard" },
     { id: "pos", label: "Purchase Orders" },
     { id: "invoices", label: "Customer Invoices" },
+    { id: "proformas", label: "Proforma Invoices" },
     { id: "supplier_invoices", label: "Supplier Invoices" },
     { id: "pettycash", label: "Petty Cash" },
     { id: "statements", label: "Statements of Account" },
@@ -2024,6 +2025,210 @@ function siDaysUntil(d) { if (!d) return null; return Math.ceil((new Date(d)-new
 
 
 
+// ── PROFORMA INVOICES (read-only mirror of the Finance portal) ─────────────────
+// Raised and managed in the Finance portal (public.client_proforma_invoices / _lines).
+// Ops can view and see advance recovery; it cannot add, edit or delete. Live via Supabase realtime.
+const PFO_STATUS = {
+  draft:     { label:"Draft",     background:"#f1f5f9", color:"#475569" },
+  sent:      { label:"Sent",      background:"#dbeafe", color:"#1e40af" },
+  received:  { label:"Received",  background:"#dcfce7", color:"#166534" },
+  cancelled: { label:"Cancelled", background:"#fee2e2", color:"#991b1b" },
+};
+function pfoLine(l) {
+  const qty = l.qty === "" || l.qty == null ? 1 : Number(l.qty) || 0;
+  const rate = Number(l.unit_rate) || 0, discount = Number(l.discount) || 0;
+  const vatPct = l.vat_pct === "" || l.vat_pct == null ? 5 : Number(l.vat_pct);
+  const taxable = qty * rate - discount, vatAmt = Math.round(taxable * vatPct) / 100;
+  return { qty, rate, discount, vatPct, taxable, vatAmt, incl: taxable + vatAmt };
+}
+function pfoTotals(lines) {
+  return (lines || []).reduce((s, l) => { const c = pfoLine(l); s.taxable += c.taxable; s.vatAmt += c.vatAmt; s.incl += c.incl; return s; }, { taxable:0, vatAmt:0, incl:0 });
+}
+
+function ProformaInvoices() {
+  const [rows, setRows] = useState([]);
+  const [linesMap, setLinesMap] = useState({});
+  const [recoveries, setRecoveries] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
+  const [detail, setDetail] = useState(null);
+
+  async function load() {
+    const [pf, pl, ci] = await Promise.all([
+      sb.from("client_proforma_invoices").select("*").order("proforma_date", { ascending: false }),
+      sb.from("client_proforma_lines").select("*").order("sort_order", { ascending: true }),
+      sb.from("client_invoices").select("id,invoice_number,invoice_date,month,advance_proforma_id,advance_recovery_pct,advance_recovery_amount").not("advance_proforma_id", "is", null),
+    ]);
+    if (!pf.error) setRows(pf.data || []);
+    const m = {}; (pl.data || []).forEach(l => { (m[l.proforma_id] = m[l.proforma_id] || []).push(l); });
+    setLinesMap(m);
+    setRecoveries(ci.data || []);
+    setLoading(false);
+  }
+  useEffect(() => {
+    load();
+    const ch = sb.channel("ops-proforma-invoices")
+      .on("postgres_changes", { event: "*", schema: "public", table: "client_proforma_invoices" }, () => load())
+      .on("postgres_changes", { event: "*", schema: "public", table: "client_proforma_lines" }, () => load())
+      .on("postgres_changes", { event: "*", schema: "public", table: "client_invoices" }, () => load())
+      .subscribe();
+    const t = setInterval(load, 60000);
+    return () => { sb.removeChannel(ch); clearInterval(t); };
+  }, []);
+
+  // Advance recovery per received advance proforma (amount excl. VAT, recovered on tax invoices, balance)
+  const ledger = React.useMemo(() => {
+    const out = {};
+    rows.filter(p => p.proforma_type === "advance" && p.status === "received").forEach(p => {
+      const amount = pfoTotals(linesMap[p.id]).taxable;
+      const invs = recoveries.filter(i => i.advance_proforma_id === p.id && Number(i.advance_recovery_amount) > 0);
+      const recovered = invs.reduce((s, i) => s + Number(i.advance_recovery_amount || 0), 0);
+      out[p.id] = { amount, recovered, balance: Math.max(0, Math.round((amount - recovered) * 100) / 100), invoices: invs };
+    });
+    return out;
+  }, [rows, linesMap, recoveries]);
+
+  const filtered = rows.filter(p => {
+    const ms = statusFilter === "All" || p.status === statusFilter;
+    const q = search.toLowerCase();
+    const mq = !q || p.client_name?.toLowerCase().includes(q) || p.proforma_number?.toLowerCase().includes(q) || p.po_reference?.toLowerCase().includes(q);
+    return ms && mq;
+  });
+
+  const stats = React.useMemo(() => {
+    const live = rows.filter(p => p.status !== "cancelled");
+    const awaiting = live.filter(p => p.status === "sent");
+    return {
+      total: live.length,
+      awaitingCount: awaiting.length,
+      awaitingAmt: awaiting.reduce((s, p) => s + pfoTotals(linesMap[p.id]).incl, 0),
+      receivedAmt: live.filter(p => p.status === "received").reduce((s, p) => s + (Number(p.received_amount_aed) || 0), 0),
+      openAdvance: Object.values(ledger).reduce((s, l) => s + l.balance, 0),
+    };
+  }, [rows, linesMap, ledger]);
+
+  const badge = (st) => { const s = PFO_STATUS[st] || { label: st || "—", background:"#f1f5f9", color:"#334155" };
+    return <span style={{ padding:"2px 9px", borderRadius:999, fontSize:11, fontWeight:800, background:s.background, color:s.color }}>{s.label}</span>; };
+
+  function Detail({ p, onClose }) {
+    const lines = linesMap[p.id] || [];
+    const t = pfoTotals(lines);
+    const led = ledger[p.id];
+    return (
+      <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,.6)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20,backdropFilter:"blur(3px)"}}
+           onClick={e => e.target === e.currentTarget && onClose()}>
+        <div style={{background:"#fff",borderRadius:20,boxShadow:"0 20px 60px rgba(15,23,42,.2)",width:"100%",maxWidth:760,maxHeight:"88vh",overflowY:"auto",borderTop:"4px solid #0f172a"}}>
+          <div style={{padding:"16px 22px 12px",borderBottom:"1px solid #e2e8f0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{fontWeight:900,fontSize:15,color:"#0f172a"}}>📄 Proforma {p.proforma_number || ""} {badge(p.status)}</div>
+            <button onClick={onClose} style={{width:30,height:30,borderRadius:"50%",border:"none",background:"#f1f5f9",cursor:"pointer",fontSize:16}}>×</button>
+          </div>
+          <div style={{padding:"18px 22px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:"10px 24px",fontSize:13}}>
+            {[
+              ["Client", p.client_name || "—"],
+              ["Date", siFmtDate(p.proforma_date)],
+              ["Type", p.proforma_type === "advance" ? `Advance ${p.advance_pct ?? "—"}% · recover ${p.recovery_pct ?? "—"}% per invoice` : "General"],
+              ["PO Reference", p.po_reference || "—"],
+              ["PO Value", p.po_value ? siFmtAed(p.po_value) : "—"],
+              ["Project / Location", p.project_location || "—"],
+              ["Subject", p.subject_line || "—"],
+              ["Payment Terms", p.payment_terms || "—"],
+              ["Validity", p.validity || "—"],
+              ["Received", p.received_date ? `${siFmtAed(p.received_amount_aed)} on ${siFmtDate(p.received_date)}` : "—"],
+              ["Remarks", p.remarks || "—"],
+            ].map(([label, val]) => (
+              <div key={label} style={{display:"flex",flexDirection:"column",gap:2}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:".04em"}}>{label}</div>
+                <div style={{fontWeight:600,color:"#0f172a"}}>{val}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{padding:"0 22px 16px"}}>
+            <div className="table-scroll">
+              <table className="data-table">
+                <thead><tr><th>Description</th><th>Qty</th><th>Unit</th><th>Rate</th><th>Discount</th><th>VAT %</th><th>Taxable</th><th>Total (Incl. VAT)</th></tr></thead>
+                <tbody>
+                  {lines.length === 0 && <tr><td colSpan={8} style={{textAlign:"center",color:"#64748b"}}>No lines</td></tr>}
+                  {lines.map(l => { const c = pfoLine(l); return (
+                    <tr key={l.id}><td>{l.description}</td><td>{c.qty}</td><td>{l.unit || ""}</td><td>{siFmt(c.rate)}</td><td>{c.discount ? siFmt(c.discount) : "—"}</td><td>{c.vatPct}%</td><td>{siFmt(c.taxable)}</td><td>{siFmt(c.incl)}</td></tr>
+                  ); })}
+                  <tr style={{fontWeight:800}}><td colSpan={6} style={{textAlign:"right"}}>Totals (AED) — VAT {siFmt(t.vatAmt)}</td><td>{siFmt(t.taxable)}</td><td>{siFmt(t.incl)}</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          {led && (
+            <div style={{padding:"0 22px 18px",fontSize:13}}>
+              <div style={{fontWeight:800,marginBottom:6}}>Advance recovery</div>
+              <div style={{marginBottom:6}}>Advance {siFmtAed(led.amount)} · Recovered {siFmtAed(led.recovered)} · <strong>Balance {siFmtAed(led.balance)}</strong> (excl. VAT)</div>
+              {led.invoices.length === 0 ? <div style={{color:"#64748b"}}>Not yet recovered on any tax invoice.</div> :
+                led.invoices.map(i => <div key={i.id} style={{color:"#334155"}}>• {i.invoice_number} ({siFmtDate(i.invoice_date)}) — {i.advance_recovery_pct ?? "—"}% = {siFmtAed(i.advance_recovery_amount)}</div>)}
+            </div>
+          )}
+          <div style={{padding:"12px 22px",borderTop:"1px solid #e2e8f0",background:"#f8fafc",borderRadius:"0 0 20px 20px",fontSize:12,color:"#94a3b8",textAlign:"center"}}>
+            Read-only — raise and edit proformas in the Finance Portal
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {detail && <Detail p={detail} onClose={() => setDetail(null)} />}
+      <div className="kpi-grid" style={{gridTemplateColumns:"repeat(4,minmax(0,1fr))"}}>
+        <div className="kpi-card"><div className="kpi-label">Proformas</div><div className="kpi-value" style={{fontSize:22}}>{stats.total}</div></div>
+        <div className="kpi-card" style={{borderLeft:"3px solid #1e40af"}}><div className="kpi-label">Sent — awaiting payment</div><div className="kpi-value" style={{fontSize:18,color:"#1e40af"}}>{siFmt(stats.awaitingAmt)}</div><div style={{fontSize:11,color:"#64748b",marginTop:2}}>{stats.awaitingCount} proforma(s), incl. VAT</div></div>
+        <div className="kpi-card" style={{borderLeft:"3px solid #166534"}}><div className="kpi-label">Received (AED)</div><div className="kpi-value" style={{fontSize:18,color:"#166534"}}>{siFmt(stats.receivedAmt)}</div></div>
+        <div className="kpi-card" style={{borderLeft:"3px solid #d97706"}}><div className="kpi-label">Open advance to recover</div><div className="kpi-value" style={{fontSize:18,color:"#d97706"}}>{siFmt(stats.openAdvance)}</div><div style={{fontSize:11,color:"#64748b",marginTop:2}}>excl. VAT</div></div>
+      </div>
+
+      <div className="content-card">
+        <div className="section-head">
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+            <select className="btn-secondary" value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{padding:"7px 12px",borderRadius:10,fontSize:13}}>
+              <option value="All">All Statuses</option>
+              {Object.entries(PFO_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+            </select>
+            <span style={{fontSize:12,color:"#94a3b8",fontStyle:"italic"}}>Raise proformas in Finance Portal</span>
+          </div>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            <input className="search-input" placeholder="Search client, proforma no., PO…" value={search} onChange={e => setSearch(e.target.value)}/>
+            <button className="btn-secondary" onClick={load}>🔄</button>
+          </div>
+        </div>
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead><tr><th>Date</th><th>Proforma #</th><th>Client</th><th>PO</th><th>Type</th><th>Total (Incl. VAT)</th><th>Status</th><th>Received</th><th>Advance Recovered / Balance</th><th>View</th></tr></thead>
+            <tbody>
+              {loading && <tr><td colSpan={10} style={{textAlign:"center",padding:24,color:"#64748b"}}>Loading…</td></tr>}
+              {!loading && filtered.length === 0 && <tr><td colSpan={10} style={{textAlign:"center",padding:24,color:"#64748b"}}>No proforma invoices found</td></tr>}
+              {!loading && filtered.map(p => {
+                const t = pfoTotals(linesMap[p.id]);
+                const led = ledger[p.id];
+                return (
+                  <tr key={p.id} style={p.status === "cancelled" ? { opacity:.55 } : {}}>
+                    <td>{siFmtDate(p.proforma_date)}</td>
+                    <td style={{fontWeight:700}}>{p.proforma_number}</td>
+                    <td>{p.client_name}</td>
+                    <td>{p.po_reference || "—"}</td>
+                    <td>{p.proforma_type === "advance" ? `Advance ${p.advance_pct ?? "—"}% · recover ${p.recovery_pct ?? "—"}%` : "General"}</td>
+                    <td style={{fontWeight:700}}>{siFmt(t.incl)}</td>
+                    <td>{badge(p.status)}</td>
+                    <td>{p.received_date ? <>{siFmtAed(p.received_amount_aed)}<div style={{fontSize:11,color:"#64748b"}}>{siFmtDate(p.received_date)}</div></> : "—"}</td>
+                    <td>{led ? <>{siFmt(led.recovered)} / <strong>{siFmt(led.balance)}</strong></> : p.proforma_type === "advance" ? <span style={{fontSize:11.5,color:"#94a3b8"}}>Starts when received</span> : "—"}</td>
+                    <td><button className="btn-secondary" style={{padding:"4px 10px"}} onClick={() => setDetail(p)}>View</button></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
+  );
+}
+
 function SupplierInvoices() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2303,6 +2508,7 @@ function App() {
     dashboard: ["Dashboard", "Overview of open POs, unpaid invoices, and outstanding balance"],
     pos: ["Purchase Orders", "Upload POs and let AI pull the fields for review"],
     invoices: ["Customer Invoices", "Raise customer invoices — against a PO, or customer-only when there is no PO"],
+    proformas: ["Proforma Invoices", "Proformas raised in the Finance portal — view only, updates live"],
     supplier_invoices: ["Supplier Invoices", "Supplier invoices recorded in the Finance portal — view only, updates live"],
     pettycash: ["Petty Cash", "Track small day-to-day office expenses"],
     statements: ["Statements of Account", "Per-client balance, aging, and export"],
@@ -2330,6 +2536,7 @@ function App() {
         {view === "dashboard" && <Dashboard />}
         {view === "pos" && <PurchaseOrders />}
         {view === "invoices" && <Invoices />}
+        {view === "proformas" && <ProformaInvoices />}
         {view === "supplier_invoices" && <SupplierInvoices />}
         {view === "pettycash" && <PettyCash />}
         {view === "statements" && <Statements />}
