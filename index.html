@@ -303,6 +303,48 @@ html, body { background:#0b1522 !important; }
 .login-form input:focus { border-color:#c8a84b !important; outline:3px solid rgba(200,168,75,.3) !important; }
 .login-hub-link { display:block; text-align:center; margin-top:14px; font-size:12px; color:#64748b; text-decoration:none; }
 .login-hub-link:hover { color:#0d3b6e; }
+
+/* ---- Dashboard ---- */
+.db-kpis { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; margin-bottom:12px; }
+@media (max-width:1100px){ .db-kpis{ grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width:600px){ .db-kpis{ grid-template-columns:1fr; } }
+.db .kpi-value { font-size:22px; }
+.db-sub { font-size:11.5px; color:#8fa1b8; margin-top:3px; }
+.db-red { color:#f87171 !important; } .db-amber { color:#fbbf24 !important; } .db-green { color:#4ade80 !important; } .db-muted { color:#8fa1b8; }
+.db-click { cursor:pointer; transition:border-color .15s; } #root#root#root .sh-navy .db .kpi-card.db-click:hover { border-color:#c8a84b !important; }
+.db-mini { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; margin-bottom:18px; }
+@media (max-width:1100px){ .db-mini{ grid-template-columns:repeat(2,minmax(0,1fr)); } }
+.db-mini-item { display:flex; justify-content:space-between; align-items:center; padding:10px 14px; border:1px solid #22344f; background:#0f1b2d; border-radius:12px; font-size:12px; color:#8fa1b8; }
+.db-mini-item b { color:#e6edf6; font-size:14px; }
+.db-mini-item.db-click:hover { border-color:#c8a84b; }
+.db-two { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+.db-two-wide { grid-template-columns:1.5fr 1fr; }
+@media (max-width:1000px){ .db-two, .db-two-wide { grid-template-columns:1fr; } }
+.db-head { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px; }
+.db-head h3 { margin:0 !important; }
+.db-link { background:none; border:none; color:#c8a84b; font-weight:800; font-size:12px; cursor:pointer; white-space:nowrap; }
+.db-link:hover { text-decoration:underline; }
+.db-count { display:inline-block; margin-left:6px; padding:1px 8px; border-radius:999px; background:#c8a84b; color:#072340; font-size:11px; font-weight:900; vertical-align:middle; }
+.db-alerts { display:flex; flex-direction:column; gap:6px; }
+.db-alert { display:flex; gap:10px; align-items:flex-start; padding:9px 12px; border-radius:10px; font-size:13px; border:1px solid #22344f; background:#0f1b2d; color:#e6edf6; }
+.db-alert:hover { border-color:#c8a84b; }
+.db-dot { width:8px; height:8px; border-radius:50%; margin-top:5px; flex:none; }
+.db-alert-red .db-dot { background:#f87171; } .db-alert-red { border-left:3px solid #f87171; }
+.db-alert-amber .db-dot { background:#fbbf24; } .db-alert-amber { border-left:3px solid #fbbf24; }
+.db-alert-blue .db-dot { background:#60a5fa; } .db-alert-blue { border-left:3px solid #60a5fa; }
+.db-empty { font-size:13px; color:#8fa1b8; padding:6px 0; }
+.db-table { width:100%; border-collapse:collapse; font-size:13px; }
+.db-table td { padding:9px 6px; border-bottom:1px solid #22344f; vertical-align:middle; color:#e6edf6; }
+.db-table tr:last-child td { border-bottom:none; }
+.db-name { font-weight:700; }
+.db-amt { text-align:right; font-weight:800; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.db-nowrap { white-space:nowrap; font-size:12.5px; }
+.db-age { display:flex; flex-direction:column; gap:12px; }
+.db-age-row { display:grid; grid-template-columns:90px 1fr 110px; gap:10px; align-items:center; font-size:13px; }
+.db-age-label { color:#8fa1b8; font-weight:700; }
+.db-bar-track { height:10px; background:#0b1626; border-radius:999px; overflow:hidden; }
+.db-bar { height:100%; border-radius:999px; min-width:2px; }
+.db-bar.b0 { background:#4ade80; } .db-bar.b1 { background:#fbbf24; } .db-bar.b2 { background:#fb923c; } .db-bar.b3 { background:#f87171; } .db-bar.b4 { background:#dc2626; }
 </style>
 </head>
 <body>
@@ -453,28 +495,297 @@ function Sidebar({ view, setView, mobileOpen, onCloseMobile }) {
   );
 }
 
-function Dashboard() {
-  const [stats, setStats] = useState(null);
+function dbDays(d) { if (!d) return null; const t = new Date(); t.setHours(0,0,0,0); const x = new Date(d + "T00:00:00"); return Math.round((x - t) / 86400000); }
+function dbDueLabel(days) {
+  if (days == null) return { text: "No due date", cls: "db-muted" };
+  if (days < 0) return { text: Math.abs(days) + "d overdue", cls: "db-red" };
+  if (days === 0) return { text: "Due today", cls: "db-amber" };
+  if (days <= 7) return { text: "in " + days + "d", cls: "db-amber" };
+  return { text: "in " + days + "d", cls: "db-muted" };
+}
+function dbShortDate(d) { return d ? new Date(d + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) : "—"; }
+function dbK(n) { const v = Number(n || 0); return Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(2) + "M" : Math.abs(v) >= 1e4 ? (v / 1e3).toFixed(1) + "K" : fmt(v); }
 
+function Dashboard({ setView }) {
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState("");
+
+  async function load() {
+    const [inv, sup, pos, pc, pfo, pay] = await Promise.all([
+      ops().from("invoice_summary").select("id, invoice_no, customer_name, po_id, invoice_value, amount_paid, balance_due, due_date, days_delayed, computed_status, currency"),
+      sb.from("supplier_invoices").select("id, supplier_name, invoice_number, total_amount, due_date, satco_due_date, status, variance, paid_date, paid_amount"),
+      ops().from("purchase_orders").select("id, po_no, po_value, expiry_date, currency, status, deleted_at, customers(name)").eq("status", "open"),
+      ops().from("petty_cash").select("entry_date, amount, entry_type, account, deleted_at"),
+      sb.from("client_proforma_invoices").select("id, proforma_number, client_name, status, proforma_date"),
+      ops().from("payments").select("amount, paid_date, invoice_id, deleted_at").order("paid_date", { ascending: false }).limit(200),
+    ]);
+    const firstErr = [inv, sup, pos, pc].find((r) => r.error);
+    if (firstErr) { setErr(firstErr.error.message); return; }
+    setErr("");
+    setD({ inv: inv.data || [], sup: sup.data || [], pos: (pos.data || []).filter((p) => !p.deleted_at),
+           pc: (pc.data || []).filter((e) => !e.deleted_at), pfo: pfo.data || [], pay: (pay.data || []).filter((p) => !p.deleted_at) });
+  }
+
+  // Live: updates as soon as anything changes in Finance / Ops, plus a 60s refresh fallback
   useEffect(() => {
-    (async () => {
-      const [{ count: openPos }, { count: openInvoices }, { data: summary }] = await Promise.all([
-        ops().from("purchase_orders").select("*", { count: "exact", head: true }).eq("status", "open"),
-        ops().from("invoices").select("*", { count: "exact", head: true }).neq("status", "paid"),
-        ops().from("invoice_summary").select("balance_due"),
-      ]);
-      const totalOutstanding = (summary || []).reduce((s, r) => s + Number(r.balance_due || 0), 0);
-      setStats({ openPos: openPos || 0, openInvoices: openInvoices || 0, totalOutstanding });
-    })();
+    load();
+    const ch = sb.channel("ops-dashboard")
+      .on("postgres_changes", { event: "*", schema: "public", table: "supplier_invoices" }, () => load())
+      .on("postgres_changes", { event: "*", schema: "ops", table: "invoices" }, () => load())
+      .on("postgres_changes", { event: "*", schema: "ops", table: "payments" }, () => load())
+      .subscribe();
+    const t = setInterval(load, 60000);
+    return () => { sb.removeChannel(ch); clearInterval(t); };
   }, []);
 
-  if (!stats) return <div className="content-card">Loading…</div>;
+  if (err) return <div className="content-card alert-card">Could not load dashboard: {err}</div>;
+  if (!d) return <div className="content-card">Loading…</div>;
+
+  const go = (v) => setView && setView(v);
+  const today = new Date().toISOString().slice(0, 10);
+  const monthKey = today.slice(0, 7);
+
+  // ---- Receivables (customer invoices) ----
+  const openInv = d.inv.filter((i) => Number(i.balance_due) > 0.005);
+  const aedInv = openInv.filter((i) => (i.currency || "AED") === "AED");
+  const otherCur = {};
+  openInv.filter((i) => (i.currency || "AED") !== "AED").forEach((i) => { otherCur[i.currency] = (otherCur[i.currency] || 0) + Number(i.balance_due); });
+  const recvTotal = aedInv.reduce((s, i) => s + Number(i.balance_due), 0);
+  const recvOverdue = aedInv.filter((i) => dbDays(i.due_date) < 0);
+  const recvOverdueAmt = recvOverdue.reduce((s, i) => s + Number(i.balance_due), 0);
+  const recvNext30 = aedInv.filter((i) => { const x = dbDays(i.due_date); return x != null && x >= 0 && x <= 30; }).reduce((s, i) => s + Number(i.balance_due), 0);
+  const incoming = [...openInv].sort((a, b) => (a.due_date || "9999").localeCompare(b.due_date || "9999"));
+
+  // ---- Payables (supplier invoices) ----
+  const supDue = (r) => r.satco_due_date || r.due_date;
+  const openSup = d.sup.filter((r) => !["Paid", "Disputed"].includes(r.status));
+  const disputed = d.sup.filter((r) => r.status === "Disputed");
+  const payTotal = openSup.reduce((s, r) => s + (parseFloat(r.total_amount) || 0), 0);
+  const payOverdue = openSup.filter((r) => dbDays(supDue(r)) < 0);
+  const payNext30 = openSup.filter((r) => { const x = dbDays(supDue(r)); return x != null && x <= 30; }).reduce((s, r) => s + (parseFloat(r.total_amount) || 0), 0);
+  const outgoing = [...openSup].sort((a, b) => (supDue(a) || "9999").localeCompare(supDue(b) || "9999"));
+  const nextSup = outgoing[0];
+  const paidSupMonth = d.sup.filter((r) => r.status === "Paid" && (r.paid_date || "").startsWith(monthKey)).reduce((s, r) => s + (parseFloat(r.paid_amount || r.total_amount) || 0), 0);
+
+  // ---- Cash position over next 30 days ----
+  const net30 = recvNext30 + recvOverdueAmt - payNext30;
+
+  // ---- Collected this month ----
+  const collectedMonth = d.pay.filter((p) => (p.paid_date || "").startsWith(monthKey)).reduce((s, p) => s + Number(p.amount || 0), 0);
+  const invById = Object.fromEntries(d.inv.map((i) => [i.id, i]));
+  const recentReceipts = d.pay.slice(0, 5).map((p) => ({ ...p, inv: invById[p.invoice_id] }));
+
+  // ---- Ageing (AED) ----
+  const buckets = [
+    { label: "Not due", test: (x) => x == null || x >= 0, cls: "b0" },
+    { label: "1–30", test: (x) => x < 0 && x >= -30, cls: "b1" },
+    { label: "31–60", test: (x) => x < -30 && x >= -60, cls: "b2" },
+    { label: "61–90", test: (x) => x < -60 && x >= -90, cls: "b3" },
+    { label: "90+", test: (x) => x < -90, cls: "b4" },
+  ].map((b) => ({ ...b, total: aedInv.filter((i) => b.test(dbDays(i.due_date))).reduce((s, i) => s + Number(i.balance_due), 0) }));
+  const ageMax = Math.max(1, ...buckets.map((b) => b.total));
+
+  // ---- Top customers by balance ----
+  const byCust = {};
+  aedInv.forEach((i) => { const k = i.customer_name || "—"; byCust[k] = byCust[k] || { name: k, bal: 0, overdue: 0, n: 0 }; byCust[k].bal += Number(i.balance_due); byCust[k].n++; if (dbDays(i.due_date) < 0) byCust[k].overdue += Number(i.balance_due); });
+  const topCust = Object.values(byCust).sort((a, b) => b.bal - a.bal).slice(0, 5);
+
+  // ---- PO utilisation ----
+  const invByPo = {};
+  d.inv.forEach((i) => { if (i.po_id) invByPo[i.po_id] = (invByPo[i.po_id] || 0) + Number(i.invoice_value || 0); });
+  const poRows = d.pos.map((p) => {
+    const invoiced = invByPo[p.id] || 0, val = Number(p.po_value || 0);
+    return { ...p, invoiced, val, pct: val > 0 ? invoiced / val * 100 : null, remaining: val > 0 ? val - invoiced : null, exp: dbDays(p.expiry_date) };
+  }).sort((a, b) => (b.val || 0) - (a.val || 0));
+  const poRemaining = poRows.reduce((s, p) => s + Math.max(0, p.remaining || 0), 0);
+
+  // ---- Petty cash ----
+  const pcAcc = {};
+  d.pc.forEach((e) => { const k = e.account || "Unassigned"; pcAcc[k] = pcAcc[k] || { name: k, bal: 0, spentMonth: 0 }; const a = Number(e.amount || 0); if (e.entry_type === "receipt") pcAcc[k].bal += a; else { pcAcc[k].bal -= a; if ((e.entry_date || "").startsWith(monthKey)) pcAcc[k].spentMonth += a; } });
+  const pcList = Object.values(pcAcc).sort((a, b) => a.name.localeCompare(b.name));
+  const pcSpentMonth = pcList.reduce((s, a) => s + a.spentMonth, 0);
+
+  // ---- Alerts ----
+  const alerts = [];
+  recvOverdue.forEach((i) => alerts.push({ lvl: "red", text: `${i.customer_name} — invoice ${i.invoice_no} is ${Math.abs(dbDays(i.due_date))} days overdue (AED ${fmt(i.balance_due)})`, view: "statements" }));
+  payOverdue.forEach((r) => alerts.push({ lvl: "red", text: `Supplier payment overdue: ${r.supplier_name} inv ${r.invoice_number} — AED ${fmt(r.total_amount)} was due ${dbShortDate(supDue(r))}`, view: "supplier_invoices" }));
+  openSup.filter((r) => { const x = dbDays(supDue(r)); return x != null && x >= 0 && x <= 7; }).forEach((r) => alerts.push({ lvl: "amber", text: `Pay ${r.supplier_name} (inv ${r.invoice_number}) by ${dbShortDate(supDue(r))} — AED ${fmt(r.total_amount)}`, view: "supplier_invoices" }));
+  openSup.filter((r) => Math.abs(parseFloat(r.variance) || 0) > 0.5).forEach((r) => alerts.push({ lvl: "amber", text: `${r.supplier_name} inv ${r.invoice_number} differs from Mobilisation portal by AED ${fmt(r.variance)}`, view: "supplier_invoices" }));
+  disputed.forEach((r) => alerts.push({ lvl: "amber", text: `Disputed supplier invoice: ${r.supplier_name} ${r.invoice_number}`, view: "supplier_invoices" }));
+  poRows.forEach((p) => {
+    if (p.exp != null && p.exp < 0) alerts.push({ lvl: "amber", text: `PO ${p.po_no} (${p.customers?.name || "—"}) expired ${dbShortDate(p.expiry_date)} but is still open`, view: "pos" });
+    else if (p.exp != null && p.exp <= 30) alerts.push({ lvl: "amber", text: `PO ${p.po_no} (${p.customers?.name || "—"}) expires in ${p.exp} days`, view: "pos" });
+    if (p.pct != null && p.pct > 100) alerts.push({ lvl: "amber", text: `PO ${p.po_no} is over-invoiced — AED ${fmt(p.invoiced)} invoiced vs PO value ${fmt(p.val)}`, view: "pos" });
+  });
+  d.pfo.filter((p) => (p.status || "").toLowerCase() === "draft").forEach((p) => alerts.push({ lvl: "blue", text: `Proforma ${p.proforma_number || ""} for ${p.client_name} is still in draft (since ${dbShortDate(p.proforma_date)})`, view: "invoices" }));
+  pcList.filter((a) => a.bal < 0).forEach((a) => alerts.push({ lvl: "amber", text: `Petty cash (${a.name}) is negative: AED ${fmt(a.bal)} — top-up needed`, view: "pettycash" }));
+  const lvlOrder = { red: 0, amber: 1, blue: 2 };
+  alerts.sort((a, b) => lvlOrder[a.lvl] - lvlOrder[b.lvl]);
+
+  const otherCurText = Object.entries(otherCur).map(([c, v]) => `+ ${c} ${fmt(v)}`).join(" · ");
 
   return (
-    <div className="kpi-grid">
-      <div className="kpi-card"><div className="kpi-label">Open Purchase Orders</div><div className="kpi-value">{stats.openPos}</div></div>
-      <div className="kpi-card"><div className="kpi-label">Unpaid Invoices</div><div className="kpi-value">{stats.openInvoices}</div></div>
-      <div className="kpi-card"><div className="kpi-label">Total Outstanding</div><div className="kpi-value">{fmt(stats.totalOutstanding)}</div></div>
+    <div className="db">
+      {/* KPI row */}
+      <div className="db-kpis">
+        <div className="kpi-card db-click" onClick={() => go("statements")}>
+          <div className="kpi-label">Receivable from customers</div>
+          <div className="kpi-value">AED {fmt(recvTotal)}</div>
+          <div className="db-sub">{aedInv.length} unpaid invoice{aedInv.length === 1 ? "" : "s"}{recvOverdueAmt > 0 ? <span className="db-red"> · {fmt(recvOverdueAmt)} overdue</span> : <span className="db-green"> · nothing overdue</span>}{otherCurText && <span> · {otherCurText}</span>}</div>
+        </div>
+        <div className="kpi-card db-click" onClick={() => go("supplier_invoices")}>
+          <div className="kpi-label">Payable to suppliers</div>
+          <div className="kpi-value">AED {fmt(payTotal)}</div>
+          <div className="db-sub">{openSup.length} unpaid{nextSup ? <span> · next due {dbShortDate(supDue(nextSup))}</span> : ""}{payOverdue.length > 0 && <span className="db-red"> · {payOverdue.length} overdue</span>}</div>
+        </div>
+        <div className="kpi-card">
+          <div className="kpi-label">Net cash, next 30 days</div>
+          <div className={"kpi-value " + (net30 >= 0 ? "db-green" : "db-red")}>{net30 >= 0 ? "+" : "−"} AED {fmt(Math.abs(net30))}</div>
+          <div className="db-sub">In {dbK(recvNext30 + recvOverdueAmt)} (incl. overdue) · Out {dbK(payNext30)}</div>
+        </div>
+        <div className="kpi-card db-click" onClick={() => go("pettycash")}>
+          <div className="kpi-label">Petty cash balance</div>
+          <div className="kpi-value">AED {fmt(pcList.reduce((s, a) => s + a.bal, 0))}</div>
+          <div className="db-sub">Spent this month: {fmt(pcSpentMonth)}</div>
+        </div>
+      </div>
+
+      <div className="db-mini">
+        <div className="db-mini-item db-click" onClick={() => go("pos")}><span>Open POs</span><b>{d.pos.length}</b></div>
+        <div className="db-mini-item db-click" onClick={() => go("pos")}><span>Un-invoiced PO value</span><b>AED {dbK(poRemaining)}</b></div>
+        <div className="db-mini-item"><span>Collected this month</span><b className="db-green">AED {dbK(collectedMonth)}</b></div>
+        <div className="db-mini-item"><span>Suppliers paid this month</span><b>AED {dbK(paidSupMonth)}</b></div>
+      </div>
+
+      {/* Alerts */}
+      <div className="content-card">
+        <h3>Needs attention {alerts.length > 0 && <span className="db-count">{alerts.length}</span>}</h3>
+        {alerts.length === 0 ? <div className="db-empty db-green">✓ All clear — nothing overdue, expiring or disputed.</div> : (
+          <div className="db-alerts">
+            {alerts.slice(0, 10).map((a, i) => (
+              <div key={i} className={"db-alert db-alert-" + a.lvl + " db-click"} onClick={() => go(a.view)}>
+                <span className="db-dot"></span><span>{a.text}</span>
+              </div>
+            ))}
+            {alerts.length > 10 && <div className="db-sub">+ {alerts.length - 10} more</div>}
+          </div>
+        )}
+      </div>
+
+      {/* Upcoming payments in / out */}
+      <div className="db-two">
+        <div className="content-card">
+          <div className="db-head"><h3>Money coming in — customer invoices due</h3><button className="db-link" onClick={() => go("invoices")}>View all →</button></div>
+          {incoming.length === 0 ? <div className="db-empty">No unpaid customer invoices.</div> : (
+            <table className="db-table"><tbody>
+              {incoming.slice(0, 8).map((i) => { const lab = dbDueLabel(dbDays(i.due_date)); return (
+                <tr key={i.id}>
+                  <td><div className="db-name">{i.customer_name || "—"}</div><div className="db-sub">Inv {i.invoice_no}{Number(i.amount_paid) > 0 ? " · part-paid" : ""}</div></td>
+                  <td className="db-nowrap"><div>{dbShortDate(i.due_date)}</div><div className={"db-sub " + lab.cls}>{lab.text}</div></td>
+                  <td className="db-amt">{(i.currency || "AED") !== "AED" ? i.currency + " " : ""}{fmt(i.balance_due)}</td>
+                </tr>); })}
+            </tbody></table>
+          )}
+          {incoming.length > 8 && <div className="db-sub" style={{ marginTop: 8 }}>+ {incoming.length - 8} more</div>}
+        </div>
+
+        <div className="content-card">
+          <div className="db-head"><h3>Money going out — supplier payments due</h3><button className="db-link" onClick={() => go("supplier_invoices")}>View all →</button></div>
+          {outgoing.length === 0 ? <div className="db-empty">No unpaid supplier invoices.</div> : (
+            <table className="db-table"><tbody>
+              {outgoing.slice(0, 8).map((r) => { const lab = dbDueLabel(dbDays(supDue(r))); return (
+                <tr key={r.id}>
+                  <td><div className="db-name">{r.supplier_name}</div><div className="db-sub">Inv {r.invoice_number} · {r.status}</div></td>
+                  <td className="db-nowrap"><div>{dbShortDate(supDue(r))}</div><div className={"db-sub " + lab.cls}>{lab.text}</div></td>
+                  <td className="db-amt">{fmt(r.total_amount)}</td>
+                </tr>); })}
+            </tbody></table>
+          )}
+          {outgoing.length > 8 && <div className="db-sub" style={{ marginTop: 8 }}>+ {outgoing.length - 8} more</div>}
+        </div>
+      </div>
+
+      {/* Ageing + top customers */}
+      <div className="db-two">
+        <div className="content-card">
+          <h3>Receivables ageing (AED)</h3>
+          <div className="db-age">
+            {buckets.map((b) => (
+              <div key={b.label} className="db-age-row">
+                <div className="db-age-label">{b.label === "Not due" ? b.label : b.label + " days"}</div>
+                <div className="db-bar-track"><div className={"db-bar " + b.cls} style={{ width: (b.total / ageMax * 100) + "%" }}></div></div>
+                <div className="db-amt">{fmt(b.total)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="content-card">
+          <div className="db-head"><h3>Top customers by balance</h3><button className="db-link" onClick={() => go("statements")}>Statements →</button></div>
+          {topCust.length === 0 ? <div className="db-empty">No balances outstanding.</div> : (
+            <table className="db-table"><tbody>
+              {topCust.map((c) => (
+                <tr key={c.name}>
+                  <td><div className="db-name">{c.name}</div><div className="db-sub">{c.n} invoice{c.n === 1 ? "" : "s"}{c.overdue > 0 && <span className="db-red"> · {fmt(c.overdue)} overdue</span>}</div></td>
+                  <td className="db-amt">{fmt(c.bal)}</td>
+                </tr>
+              ))}
+            </tbody></table>
+          )}
+        </div>
+      </div>
+
+      {/* PO utilisation + petty cash / recent receipts */}
+      <div className="db-two db-two-wide">
+        <div className="content-card">
+          <div className="db-head"><h3>Open purchase orders — invoiced vs PO value</h3><button className="db-link" onClick={() => go("pos")}>View all →</button></div>
+          <table className="db-table"><tbody>
+            {poRows.map((p) => {
+              const expLab = p.exp == null ? null : p.exp < 0 ? <span className="db-red">expired {dbShortDate(p.expiry_date)}</span> : p.exp <= 30 ? <span className="db-amber">expires {dbShortDate(p.expiry_date)}</span> : <span>expires {dbShortDate(p.expiry_date)}</span>;
+              return (
+                <tr key={p.id}>
+                  <td style={{ width: "38%" }}><div className="db-name">{p.po_no}</div><div className="db-sub">{p.customers?.name || "—"}{expLab && <span> · {expLab}</span>}</div></td>
+                  <td>
+                    {p.pct == null ? <div className="db-sub">Open-ended / rate-based PO · {fmt(p.invoiced)} invoiced</div> : (
+                      <React.Fragment>
+                        <div className="db-bar-track"><div className={"db-bar " + (p.pct > 100 ? "b4" : p.pct > 85 ? "b2" : "b0")} style={{ width: Math.min(100, p.pct) + "%" }}></div></div>
+                        <div className="db-sub">{fmt(p.invoiced)} of {fmt(p.val)} · {p.pct.toFixed(0)}%</div>
+                      </React.Fragment>
+                    )}
+                  </td>
+                  <td className="db-amt">{p.remaining != null ? <span className={p.remaining < 0 ? "db-red" : ""}>{fmt(p.remaining)}<div className="db-sub">{p.remaining < 0 ? "over" : "left"}</div></span> : "—"}</td>
+                </tr>
+              );
+            })}
+          </tbody></table>
+        </div>
+
+        <div>
+          <div className="content-card">
+            <div className="db-head"><h3>Petty cash by account</h3><button className="db-link" onClick={() => go("pettycash")}>Open →</button></div>
+            <table className="db-table"><tbody>
+              {pcList.map((a) => (
+                <tr key={a.name}>
+                  <td><div className="db-name">{a.name}</div><div className="db-sub">Spent this month {fmt(a.spentMonth)}</div></td>
+                  <td className={"db-amt " + (a.bal < 0 ? "db-red" : "")}>{fmt(a.bal)}</td>
+                </tr>
+              ))}
+            </tbody></table>
+          </div>
+          <div className="content-card">
+            <h3>Recent customer receipts</h3>
+            {recentReceipts.length === 0 ? <div className="db-empty">No payments recorded yet.</div> : (
+              <table className="db-table"><tbody>
+                {recentReceipts.map((p, i) => (
+                  <tr key={i}>
+                    <td><div className="db-name">{p.inv?.customer_name || "—"}</div><div className="db-sub">Inv {p.inv?.invoice_no || "—"} · {dbShortDate(p.paid_date)}</div></td>
+                    <td className="db-amt db-green">{(p.inv?.currency || "AED") !== "AED" ? p.inv.currency + " " : ""}{fmt(p.amount)}</td>
+                  </tr>
+                ))}
+              </tbody></table>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -2591,7 +2902,7 @@ function App() {
   if (!session) return <LoginScreen />;
 
   const titles = {
-    dashboard: ["Dashboard", "Overview of open POs, unpaid invoices, and outstanding balance"],
+    dashboard: ["Dashboard", "Money in and out, what's due, ageing, PO usage and petty cash — updates live"],
     pos: ["Purchase Orders", "Upload POs and let AI pull the fields for review"],
     invoices: ["Customer Invoices", "Raise customer invoices — against a PO, or customer-only when there is no PO. Proformas from Finance show here tagged PROFORMA (view only)"],
     supplier_invoices: ["Supplier Invoices", "Supplier invoices recorded in the Finance portal — view only, updates live"],
@@ -2618,7 +2929,7 @@ function App() {
             <button className="signout-btn" onClick={() => sb.auth.signOut()}>Sign out</button>
           </div>
         </div>
-        {view === "dashboard" && <Dashboard />}
+        {view === "dashboard" && <Dashboard setView={setView} />}
         {view === "pos" && <PurchaseOrders />}
         {view === "invoices" && <Invoices />}
         {view === "supplier_invoices" && <SupplierInvoices />}
