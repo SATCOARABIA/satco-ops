@@ -632,27 +632,26 @@ function Dashboard({ setView, userEmail }) {
 
   return (
     <div className="db">
-      {/* KPI row — owners only */}
-      {showMoney && <>
+      {/* KPI row — big amounts masked for non-owners */}
       <div className="db-kpis">
         <div className="kpi-card db-click" onClick={() => go("statements")}>
           <div className="kpi-label">Receivable from customers</div>
-          <div className="kpi-value">AED {fmt(recvTotal)}</div>
+          {showMoney ? <div className="kpi-value">AED {fmt(recvTotal)}</div> : <div className="kpi-value">AED ••••••</div>}
           <div className="db-sub">{aedInv.length} unpaid invoice{aedInv.length === 1 ? "" : "s"}{recvOverdueAmt > 0 ? <span className="db-red"> · {fmt(recvOverdueAmt)} overdue</span> : <span className="db-green"> · nothing overdue</span>}{otherCurText && <span> · {otherCurText}</span>}</div>
         </div>
         <div className="kpi-card db-click" onClick={() => go("supplier_invoices")}>
           <div className="kpi-label">Payable to suppliers</div>
-          <div className="kpi-value">AED {fmt(payTotal)}</div>
+          {showMoney ? <div className="kpi-value">AED {fmt(payTotal)}</div> : <div className="kpi-value">AED ••••••</div>}
           <div className="db-sub">{openSup.length} unpaid{nextSup ? <span> · next due {dbShortDate(supDue(nextSup))}</span> : ""}{payOverdue.length > 0 && <span className="db-red"> · {payOverdue.length} overdue</span>}</div>
         </div>
         <div className="kpi-card">
           <div className="kpi-label">Net cash, next 30 days</div>
-          <div className={"kpi-value " + (net30 >= 0 ? "db-green" : "db-red")}>{net30 >= 0 ? "+" : "−"} AED {fmt(Math.abs(net30))}</div>
+          {showMoney ? <div className={"kpi-value " + (net30 >= 0 ? "db-green" : "db-red")}>{net30 >= 0 ? "+" : "−"} AED {fmt(Math.abs(net30))}</div> : <div className="kpi-value">AED ••••••</div>}
           <div className="db-sub">In {dbK(recvNext30 + recvOverdueAmt)} (incl. overdue) · Out {dbK(payNext30)}</div>
         </div>
         <div className="kpi-card db-click" onClick={() => go("pettycash")}>
           <div className="kpi-label">Petty cash balance</div>
-          <div className="kpi-value">AED {fmt(pcList.reduce((s, a) => s + a.bal, 0))}</div>
+          {showMoney ? <div className="kpi-value">AED {fmt(pcList.reduce((s, a) => s + a.bal, 0))}</div> : <div className="kpi-value">AED ••••••</div>}
           <div className="db-sub">Spent this month: {fmt(pcSpentMonth)}</div>
         </div>
       </div>
@@ -663,7 +662,6 @@ function Dashboard({ setView, userEmail }) {
         <div className="db-mini-item"><span>Collected this month</span><b className="db-green">AED {dbK(collectedMonth)}</b></div>
         <div className="db-mini-item"><span>Suppliers paid this month</span><b>AED {dbK(paidSupMonth)}</b></div>
       </div>
-      </>}
 
       {/* Alerts */}
       <div className="content-card">
