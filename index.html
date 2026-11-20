@@ -2072,7 +2072,8 @@ function PettyCash() {
   const accountFiltered = accountFilter === "all" ? entries : entries.filter((e) => (e.account || "") === accountFilter);
   const searchQuery = search.trim().toLowerCase();
   const visibleEntries = !searchQuery ? accountFiltered : accountFiltered.filter((e) =>
-    [e.account, e.purpose, e.supplier, e.ledger_folio, e.payment_mode, e.category, e.amount]
+    [e.account, e.purpose, e.supplier, e.ledger_folio, e.payment_mode, e.category, e.amount, e.employee_id,
+     ((employeeOptions.find((emp) => emp.employee_id === (e.employee_id || "").toUpperCase().replace(/T$/, "")) || {}).full_name)]
       .some((v) => (v || "").toString().toLowerCase().includes(searchQuery))
   );
 
@@ -2210,7 +2211,7 @@ function PettyCash() {
       <div className="content-card">
         <div className="section-head">
           <h3>Petty Cash Book</h3>
-          <input type="text" className="search-input" value={search} onChange={(e)=>setSearch(e.target.value)} placeholder="Search particulars, supplier, bill ref…" />
+          <input type="text" className="search-input" value={search} onChange={(e)=>setSearch(e.target.value)} placeholder="Search particulars, supplier, bill ref, employee ID…" />
         </div>
         <div className="cashbook-toggle">
           <button type="button" className={cashbookView === "both" ? "active" : ""} onClick={() => setCashbookView("both")}>Both</button>
