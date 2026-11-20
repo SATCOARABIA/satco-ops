@@ -1944,6 +1944,20 @@ function PettyCash() {
   const [cashbookView, setCashbookView] = useState("both");
   const [search, setSearch] = useState("");
   const [employeeOptions, setEmployeeOptions] = useState([]); // {employee_id, full_name} from HR master, for the Employee ID datalist below
+  // Invoice-checked tick: only this user may tick/untick (also enforced in the database by a trigger)
+  const BILL_CHECKER = "shaik.zaheerudeen@satcoarabiaengg.com";
+  const [myEmail, setMyEmail] = useState("");
+  const canCheck = myEmail === BILL_CHECKER;
+  useEffect(() => { sb.auth.getSession().then(({ data }) => setMyEmail(((data.session && data.session.user && data.session.user.email) || "").toLowerCase())); }, []);
+
+  async function toggleChecked(entry) {
+    if (!canCheck) return;
+    const next = !entry.bill_checked;
+    setEntries((list) => list.map((x) => x.id === entry.id ? { ...x, bill_checked: next } : x));
+    const { error } = await ops().from("petty_cash").update({ bill_checked: next }).eq("id", entry.id);
+    if (error) { alert("Could not update tick: " + error.message); }
+    load();
+  }
 
   useEffect(() => {
     sb.from("wps_employee_master").select("employee_id,full_name").eq("active", true).order("employee_id").then(({ data }) => setEmployeeOptions(data || []));
@@ -2071,7 +2085,7 @@ function PettyCash() {
   function renderSide(list, colCount) {
     return (
       <table className="data-table">
-        <thead><tr><th>Date</th><th>Account</th><th>Emp ID</th><th>Particulars</th><th>Supplier</th><th>Bill Ref</th><th>Amount</th><th>Recoverable</th><th>Bill</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Date</th><th>Account</th><th>Emp ID</th><th>Particulars</th><th>Supplier</th><th>Bill Ref</th><th>Amount</th><th title="Hard-copy invoice checked">Checked</th><th>Recoverable</th><th>Bill</th><th>Actions</th></tr></thead>
         <tbody>
           {list.map((e) => (
             editingId === e.id ? (
@@ -2085,6 +2099,11 @@ function PettyCash() {
                 <td>{e.supplier || "—"}</td>
                 <td>{e.ledger_folio || "—"}</td>
                 <td>{fmt(e.amount)}</td>
+                <td style={{ textAlign: "center" }}>
+                  <input type="checkbox" checked={!!e.bill_checked} disabled={!canCheck} onChange={() => toggleChecked(e)}
+                    title={e.bill_checked ? ("Checked" + (e.bill_checked_at ? " on " + new Date(e.bill_checked_at).toLocaleString() : "")) : (canCheck ? "Tick once the hard-copy invoice is checked" : "Only Shaik.Zaheerudeen can tick this")}
+                    style={{ width: 17, height: 17, accentColor: "#d4af37", cursor: canCheck ? "pointer" : "not-allowed" }} />
+                </td>
                 <td>{e.employee_id && e.recoverable ? <span className="badge-overdue">Yes</span> : "—"}</td>
                 <td>{e.receipt_url ? <button className="btn-mini" onClick={() => viewFile("petty-cash-receipts", e.receipt_url)}>View</button> : "—"}</td>
                 <td>
@@ -2100,6 +2119,7 @@ function PettyCash() {
           <tr>
             <td colSpan={6} style={{ textAlign: "right", fontWeight: 700 }}>Total</td>
             <td style={{ fontWeight: 700 }}>{fmt(list.reduce((s, e) => s + Number(e.amount), 0))}</td>
+            <td style={{ fontSize: 11.5, color: "var(--muted)", textAlign: "center" }}>{list.filter((e) => e.bill_checked).length}/{list.length}</td>
             <td colSpan={3}></td>
           </tr>
         </tfoot>
@@ -2197,24 +2217,24 @@ function PettyCash() {
           <div className="cashbook-grid">
             <div>
               <h4 className="cashbook-side-title">Dr. — Receipts</h4>
-              <div className="table-scroll">{renderSide(receipts, 10)}</div>
+              <div className="table-scroll">{renderSide(receipts, 11)}</div>
             </div>
             <div>
               <h4 className="cashbook-side-title">Cr. — Payments</h4>
-              <div className="table-scroll">{renderSide(cashPayments, 10)}</div>
+              <div className="table-scroll">{renderSide(cashPayments, 11)}</div>
             </div>
           </div>
         )}
         {cashbookView === "receipts" && (
           <div>
             <h4 className="cashbook-side-title">Dr. — Receipts</h4>
-            <div className="table-scroll">{renderSide(receipts, 10)}</div>
+            <div className="table-scroll">{renderSide(receipts, 11)}</div>
           </div>
         )}
         {cashbookView === "payments" && (
           <div>
             <h4 className="cashbook-side-title">Cr. — Payments</h4>
-            <div className="table-scroll">{renderSide(cashPayments, 10)}</div>
+            <div className="table-scroll">{renderSide(cashPayments, 11)}</div>
           </div>
         )}
       </div>
