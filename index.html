@@ -510,7 +510,9 @@ function dbDueLabel(days) {
 function dbShortDate(d) { return d ? new Date(d + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) : "—"; }
 function dbK(n) { const v = Number(n || 0); return Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(2) + "M" : Math.abs(v) >= 1e4 ? (v / 1e3).toFixed(1) + "K" : fmt(v); }
 
-function Dashboard({ setView }) {
+const MONEY_VIEWERS = ["shaik.zaheerudeen@satcoarabiaengg.com", "mail@satcoarabiaengg.com"];
+function Dashboard({ setView, userEmail }) {
+  const showMoney = MONEY_VIEWERS.includes((userEmail || "").toLowerCase());
   const [d, setD] = useState(null);
   const [err, setErr] = useState("");
 
@@ -630,7 +632,8 @@ function Dashboard({ setView }) {
 
   return (
     <div className="db">
-      {/* KPI row */}
+      {/* KPI row — owners only */}
+      {showMoney && <>
       <div className="db-kpis">
         <div className="kpi-card db-click" onClick={() => go("statements")}>
           <div className="kpi-label">Receivable from customers</div>
@@ -660,6 +663,7 @@ function Dashboard({ setView }) {
         <div className="db-mini-item"><span>Collected this month</span><b className="db-green">AED {dbK(collectedMonth)}</b></div>
         <div className="db-mini-item"><span>Suppliers paid this month</span><b>AED {dbK(paidSupMonth)}</b></div>
       </div>
+      </>}
 
       {/* Alerts */}
       <div className="content-card">
@@ -2932,7 +2936,7 @@ function App() {
             <button className="signout-btn" onClick={() => sb.auth.signOut()}>Sign out</button>
           </div>
         </div>
-        {view === "dashboard" && <Dashboard setView={setView} />}
+        {view === "dashboard" && <Dashboard setView={setView} userEmail={session.user.email} />}
         {view === "pos" && <PurchaseOrders />}
         {view === "invoices" && <Invoices />}
         {view === "supplier_invoices" && <SupplierInvoices />}
