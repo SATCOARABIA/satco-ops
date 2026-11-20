@@ -510,9 +510,7 @@ function dbDueLabel(days) {
 function dbShortDate(d) { return d ? new Date(d + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) : "—"; }
 function dbK(n) { const v = Number(n || 0); return Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(2) + "M" : Math.abs(v) >= 1e4 ? (v / 1e3).toFixed(1) + "K" : fmt(v); }
 
-const MONEY_VIEWERS = ["shaik.zaheerudeen@satcoarabiaengg.com", "mail@satcoarabiaengg.com"];
-function Dashboard({ setView, userEmail }) {
-  const showMoney = MONEY_VIEWERS.includes((userEmail || "").toLowerCase());
+function Dashboard({ setView }) {
   const [d, setD] = useState(null);
   const [err, setErr] = useState("");
 
@@ -632,26 +630,22 @@ function Dashboard({ setView, userEmail }) {
 
   return (
     <div className="db">
-      {/* KPI row — big amounts masked for non-owners */}
+      {/* KPI row — headline amounts removed */}
       <div className="db-kpis">
         <div className="kpi-card db-click" onClick={() => go("statements")}>
           <div className="kpi-label">Receivable from customers</div>
-          {showMoney ? <div className="kpi-value">AED {fmt(recvTotal)}</div> : <div className="kpi-value">AED ••••••</div>}
           <div className="db-sub">{aedInv.length} unpaid invoice{aedInv.length === 1 ? "" : "s"}{recvOverdueAmt > 0 ? <span className="db-red"> · {fmt(recvOverdueAmt)} overdue</span> : <span className="db-green"> · nothing overdue</span>}{otherCurText && <span> · {otherCurText}</span>}</div>
         </div>
         <div className="kpi-card db-click" onClick={() => go("supplier_invoices")}>
           <div className="kpi-label">Payable to suppliers</div>
-          {showMoney ? <div className="kpi-value">AED {fmt(payTotal)}</div> : <div className="kpi-value">AED ••••••</div>}
           <div className="db-sub">{openSup.length} unpaid{nextSup ? <span> · next due {dbShortDate(supDue(nextSup))}</span> : ""}{payOverdue.length > 0 && <span className="db-red"> · {payOverdue.length} overdue</span>}</div>
         </div>
         <div className="kpi-card">
           <div className="kpi-label">Net cash, next 30 days</div>
-          {showMoney ? <div className={"kpi-value " + (net30 >= 0 ? "db-green" : "db-red")}>{net30 >= 0 ? "+" : "−"} AED {fmt(Math.abs(net30))}</div> : <div className="kpi-value">AED ••••••</div>}
           <div className="db-sub">In {dbK(recvNext30 + recvOverdueAmt)} (incl. overdue) · Out {dbK(payNext30)}</div>
         </div>
         <div className="kpi-card db-click" onClick={() => go("pettycash")}>
           <div className="kpi-label">Petty cash balance</div>
-          {showMoney ? <div className="kpi-value">AED {fmt(pcList.reduce((s, a) => s + a.bal, 0))}</div> : <div className="kpi-value">AED ••••••</div>}
           <div className="db-sub">Spent this month: {fmt(pcSpentMonth)}</div>
         </div>
       </div>
@@ -2934,7 +2928,7 @@ function App() {
             <button className="signout-btn" onClick={() => sb.auth.signOut()}>Sign out</button>
           </div>
         </div>
-        {view === "dashboard" && <Dashboard setView={setView} userEmail={session.user.email} />}
+        {view === "dashboard" && <Dashboard setView={setView} />}
         {view === "pos" && <PurchaseOrders />}
         {view === "invoices" && <Invoices />}
         {view === "supplier_invoices" && <SupplierInvoices />}
