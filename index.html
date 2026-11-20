@@ -2107,8 +2107,12 @@ function PettyCash() {
                 <td>{e.employee_id && e.recoverable ? <span className="badge-overdue">Yes</span> : "—"}</td>
                 <td>{e.receipt_url ? <button className="btn-mini" onClick={() => viewFile("petty-cash-receipts", e.receipt_url)}>View</button> : "—"}</td>
                 <td>
-                  <button className="btn-mini" onClick={() => setEditingId(e.id)}>Edit</button>
-                  <button className="btn-mini danger" onClick={() => handleDelete(e)}>Delete</button>
+                  {e.bill_checked && !canCheck ? (
+                    <span title="Invoice checked — locked. Only Shaik.Zaheerudeen can edit or delete." style={{ fontSize: 12, color: "var(--muted)", fontWeight: 700 }}>🔒 Locked</span>
+                  ) : (<>
+                    <button className="btn-mini" onClick={() => setEditingId(e.id)}>Edit</button>
+                    <button className="btn-mini danger" onClick={() => handleDelete(e)}>Delete</button>
+                  </>)}
                 </td>
               </tr>
             )
